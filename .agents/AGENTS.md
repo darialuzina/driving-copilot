@@ -25,6 +25,7 @@ You are working in a Python backend project built on FastAPI.
     written up as an ADR with options analysis (see `.agents/agents/docs.md`, the "ADR-full" section).
 14. If the task is data-engineering (ETL, Airflow DAGs, Kafka workers, ClickHouse,
     exports to S3) — read `.agents/agents/data-engineering.md`.
+15. If the task involves LLM calls, agents, tool-calling, prompts, or RAG — read `.agents/agents/ai.md` first.
 
 ## How to work
 
