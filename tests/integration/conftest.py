@@ -18,10 +18,12 @@ async def isolated_db(monkeypatch: pytest.MonkeyPatch) -> AsyncGenerator[None]:
     monkeypatch.setattr(session_mod, "_engine", None)
     engine = get_engine()
     await _create_tables(engine)
-    await _truncate(engine)
-    await _seed_skills(engine)
+    await _truncate_user_data(engine)
+    await _ensure_skills_seeded(engine)
     yield
-    await _truncate(engine)
+    # Only user-data tables are cleared between tests; the seeded `skills` reference
+    # data is preserved so the shared dev DB stays usable for a live bot run.
+    await _truncate_user_data(engine)
     monkeypatch.setattr(session_mod, "_engine", None)
 
 
@@ -37,22 +39,24 @@ async def _create_tables(engine: AsyncEngine) -> None:
         await conn.run_sync(Base.metadata.create_all)
 
 
-async def _seed_skills(engine: AsyncEngine) -> None:
+async def _ensure_skills_seeded(engine: AsyncEngine) -> None:
     async with get_sessionmaker()() as session:
-        for entry in SKILLS:
-            session.add(
-                SkillModel(
-                    category=entry["category"],
-                    name=entry["name"],
-                    name_nl=entry["name_nl"],
-                    exam_relevant=True,
+        existing = await session.execute(text("SELECT COUNT(*) FROM skills"))
+        if existing.scalar_one() == 0:
+            for entry in SKILLS:
+                session.add(
+                    SkillModel(
+                        category=entry["category"],
+                        name=entry["name"],
+                        name_nl=entry["name_nl"],
+                        exam_relevant=True,
+                    )
                 )
-            )
-        await session.commit()
+            await session.commit()
 
 
-async def _truncate(engine: AsyncEngine) -> None:
+async def _truncate_user_data(engine: AsyncEngine) -> None:
     async with get_sessionmaker()() as session:
-        for table in ("audit_log", "lesson_notes", "sessions", "skills"):
+        for table in ("audit_log", "lesson_notes", "sessions"):
             await session.execute(text(f"DELETE FROM {table}"))
         await session.commit()

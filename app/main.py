@@ -4,11 +4,17 @@ import argparse
 import asyncio
 import sys
 
-from app.bot import Copilot, run
 from app.config import Settings, get_settings
 from app.db.session import get_sessionmaker
+from app.logging import configure_logging
 from app.services.backfill import load_backfill
 from app.services.router import OpenRouterLlmClient
+
+# Configure structlog before importing app.bot, so the service modules' module-level
+# loggers are bound to the configured renderer (cache_logger_on_first_use=True).
+configure_logging()
+
+from app.bot import Copilot, run  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:

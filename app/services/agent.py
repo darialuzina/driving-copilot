@@ -80,6 +80,12 @@ class AgentService:
             except Exception as exc:
                 raise LlmCallError(f"answer LLM call failed: {exc}") from exc
 
+            # A malformed completion (no choices) degrades to an honest empty answer
+            # rather than crashing on choices[0].
+            if not completion.choices:
+                log.warning("agent.empty_completion", turns=_turn)
+                return "I couldn't generate an answer just now — please try rephrasing."
+
             msg = _assistant_message(completion)
             tool_calls = _tool_calls(msg)
 

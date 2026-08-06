@@ -59,6 +59,11 @@ class OpenRouterLlmClient:
             completion = await self._client.chat.completions.create(
                 model=model, messages=messages, temperature=0.0
             )
+        # OpenRouter/models occasionally return a completion with no usable choices
+        # (reasoning models, transient errors). Degrade to an empty string so the
+        # router falls back to the answer model / "other" instead of hard-failing.
+        if not completion.choices:
+            return ""
         return completion.choices[0].message.content or ""
 
     async def chat_with_tools(
