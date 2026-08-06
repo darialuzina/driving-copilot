@@ -1,0 +1,22 @@
+sessions:
+  - {date: 2026-06-19, start: "09:00", end: "10:00", instructor: Rob,     lesson_type: proefles, status: completed}
+  - {date: 2026-07-06, start: "12:40", end: "13:30", instructor: Rob,     lesson_type: rijles,   status: completed}
+  - {date: 2026-07-20, start: "09:00", end: "10:00", instructor: Desevio, lesson_type: rijles,   status: completed}
+  - {date: 2026-07-23, start: "15:15", end: "16:15", instructor: Desevio, lesson_type: rijles,   status: completed}
+  - {date: 2026-07-30, start: "14:30", end: "15:30", instructor: Desevio, lesson_type: rijles,   status: completed}
+  - {date: 2026-08-06, start: "16:05", end: "17:05", instructor: Desevio, lesson_type: rijles,   status: completed}
+
+notes:
+  - session_date: 2026-07-30
+    items:
+      - {skill: "speed adaptation",   assessment: needs_attention, note: "Speed — need to go faster"}
+      - {skill: "mirror routine",     assessment: needs_attention, note: "Look at the left mirror more often"}
+      - {skill: "gear use & clutch control", assessment: ok, note: "Starting the car: no gas needed — release the clutch a bit, feel it engage, hold it there"}
+      - {skill: "roundabouts",        assessment: needs_attention, note: "Roundabouts practiced — still difficult"}
+  - session_date: 2026-08-06
+    items:
+      - {skill: "roundabouts",        assessment: needs_attention, note: "Roundabout was not good again"}
+      - {skill: "gear use & clutch control", assessment: good, note: "Clutch better"}
+      - {skill: "steering technique", assessment: good, note: "Staying in the middle of the lane — better"}
+      - {skill: "speed adaptation",   assessment: needs_attention, note: "Challenge: speeding up quickly"}
+      - {skill: "anticipating other road users", assessment: needs_attention, note: "Thinking too much in difficult situations — need to think ahead"}
