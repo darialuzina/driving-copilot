@@ -1,29 +1,39 @@
 from __future__ import annotations
 
-from fastapi import FastAPI, status
-from fastapi.responses import RedirectResponse
+import argparse
+import asyncio
+import sys
 
-from app.api.deps import ServiceDep
-from app.api.errors import raise_for_domain_error
-from app.api.routes import router
-from app.domain.errors import DomainError
-
-
-async def redirect_to_target(short_code: str, service: ServiceDep) -> RedirectResponse:
-    try:
-        link = await service.resolve(short_code)
-    except DomainError as exc:
-        raise_for_domain_error(exc)
-    return RedirectResponse(
-        url=link.target_url.value, status_code=status.HTTP_307_TEMPORARY_REDIRECT
-    )
+from app.bot import Copilot, run
+from app.config import Settings, get_settings
+from app.db.session import get_sessionmaker
+from app.services.backfill import load_backfill
+from app.services.router import OpenRouterLlmClient
 
 
-def create_app() -> FastAPI:
-    application = FastAPI(title="Link Shortener (FastAPI track)")
-    application.include_router(router)
-    application.add_api_route("/{short_code}", redirect_to_target, methods=["GET"])
-    return application
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Driving Copilot")
+    parser.add_argument("command", nargs="?", default="bot", choices=["bot", "backfill"])
+    args = parser.parse_args(argv)
+
+    settings = get_settings()
+    if args.command == "backfill":
+        asyncio.run(_run_backfill(settings))
+        return 0
+
+    if not settings.telegram_bot_token:
+        print("TELEGRAM_BOT_TOKEN is not set", file=sys.stderr)
+        return 1
+    client = OpenRouterLlmClient(settings.llm_api_key, settings.llm_base_url)
+    copilot = Copilot.build(client, settings)
+    run(copilot, settings)
+    return 0
 
 
-app = create_app()
+async def _run_backfill(settings: Settings) -> None:
+    async with get_sessionmaker()() as session:
+        await load_backfill(session, settings.backfill_path)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
