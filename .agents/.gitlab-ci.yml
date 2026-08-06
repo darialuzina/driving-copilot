@@ -1,0 +1,17 @@
+# Minimal CI for the documentation repository.
+# For now it just marks the pipeline green so that the "Pipelines must succeed"
+# merge check does not block MRs. Later this could be extended with:
+#   - markdown lint (markdownlint-cli)
+#   - checking for broken internal links between rules
+#   - checking for UTF-8 without BOM (see README → "Local rule development")
+
+stages: [check]
+
+ok:
+  stage: check
+  image: alpine:3.20
+  script:
+    - echo "Documentation repo — no Python tests."
+    - echo "Files in place:"
+    - ls -la AGENTS.md CLAUDE.md agents/ skills/ prompts/
+    - echo "Pipeline OK."

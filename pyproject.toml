@@ -1,0 +1,72 @@
+[project]
+name = "driving_copilot"
+version = "0.1.0"
+description = "AI-first Python workshop — FastAPI track (link shortener)"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi[standard]==0.139.2",
+    "sqlalchemy[asyncio]==2.0.51",
+    "psycopg[binary]==3.3.4",
+    "alembic==1.18.5",
+    "pydantic-settings==2.14.2",
+    "structlog==26.1.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+    "pytest-cov==7.1.0",
+    "httpx==0.28.1",
+    "aiosqlite==0.22.1",
+    "ruff==0.16.0",
+    "basedpyright==1.39.9",
+    "pre-commit==4.6.1",
+    "bandit[toml]==1.9.4",
+    "pip-audit==2.10.1",
+    "locust==2.46.2",
+]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+extend-exclude = ["litestar/**", ".bootstrap/**"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ANN", "ASYNC", "SIM", "RUF"]
+ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "ANN201", "ANN001"]
+"alembic/**" = ["ANN", "F401", "E501", "I001"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.basedpyright]
+typeCheckingMode = "strict"
+pythonVersion = "3.14"
+exclude = ["alembic/**", ".venv/**", ".bootstrap/**", "locustfile.py", "litestar/**"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.coverage.run]
+branch = true
+omit = ["alembic/*", "tests/*", "litestar/*", ".bootstrap/*"]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+exclude_lines = ["if TYPE_CHECKING:", "pragma: no cover", "raise NotImplementedError", "\\.\\.\\."]
+
+[tool.bandit]
+exclude_dirs = ["tests", "alembic"]
+skips = ["B101"]
