@@ -8,3 +8,4 @@ htmlcov/
 .ruff_cache/
 *.db
 workshop.md
+logs/

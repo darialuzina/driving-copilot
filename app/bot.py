@@ -116,6 +116,7 @@ async def _on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     except DomainError as exc:
         log.error("bot.error", error=str(exc))
         reply = "Sorry, I couldn't process that right now. Please try again in a moment."
+    log.info("bot.reply", text=reply)
     if update.effective_chat is not None:
         await update.effective_chat.send_message(reply)
 

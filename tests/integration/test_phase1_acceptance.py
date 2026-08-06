@@ -145,3 +145,12 @@ async def test_acceptance_refusal_out_of_scope(ctx: ToolContext, settings: Setti
     agent = AgentService(client, settings)
     reply = await agent.handle("what tires should I buy?", "other", phase1_tools(), ctx)
     assert "can't" in reply.lower() or "cannot" in reply.lower()
+
+
+async def test_agent_degrades_on_empty_completion(ctx: ToolContext, settings: Settings) -> None:
+    from tests.conftest import FakeCompletion
+
+    client = FakeLlmClient(completions=[FakeCompletion(choices=[])])
+    agent = AgentService(client, settings)
+    reply = await agent.handle("hi", "lookup", phase1_tools(), ctx)
+    assert "couldn't" in reply.lower()
