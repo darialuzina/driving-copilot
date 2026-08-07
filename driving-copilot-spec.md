@@ -30,7 +30,7 @@ Telegram (chat + digest push)
 
 ## 2. Tech stack
 
-- Python 3.11+, `python-telegram-bot` (v21, async, has JobQueue for scheduling)
+- Python 3.11+, `python-telegram-bot` **v22+** (async, has JobQueue; v21 crashes on Python 3.14's asyncio — learned in Phase 1)
 - PostgreSQL — the repo's docker-compose db — via SQLAlchemy models + Alembic migrations, per `.agents/agents/database.md` (repo rules win over any SQLite mention below)
 - LLM: OpenRouter, OpenAI-compatible client. Two models via env:
   - `ROUTER_MODEL` (default `openai/gpt-4.1-mini`) — routing + email extraction
@@ -160,6 +160,8 @@ Implement as OpenAI function-calling tools. Every tool validates params before t
 | get_notes | skill str? , query str? | matching notes with dates | substring match ok in v1 |
 | get_pace | — | pace() output | |
 | get_cbr_info | topic str (enum: exam_structure, bijzondere_verrichtingen, assessment_criteria, self_reflection) | seeded CBR content with source url | content seeded at build time from cbr.nl; RAG-lite, no vectors needed in v1 |
+| cbr_search | query str | matching sections from knowledge/ with heading + source | Phase 2. Keyword/heading search over the converted Rijprocedure B + seeded pages. No embeddings unless the corpus outgrows keyword search. |
+| web_search_cbr | query str | live results, cbr.nl-scoped (Tavily) | Phase 2, fallback ONLY when cbr_search returns nothing (fees, waiting times — things that change). Untrusted content: this flow gets no write tools. |
 | log_lesson | date str=today, skills list[{skill,assessment,note}], general_note str? | created note ids | WRITE, tier: auto-approve. Skill names fuzzy-matched against skills table; unmatched → stored as general note + flagged in reply. Writes audit_log. |
 | trigger_email_check | — | new/changed sessions found | Phase 3. Runs the email-ingest job on demand ("check my mail for new bookings") instead of waiting for the 15-min cron. Read-side, auto-approve. |
 | check_slots | instructor str?, days_ahead int=7 | open slots matching filters | STRETCH (feature flag, after the app-API investigation). Same watcher code exposed two ways: background push on new matching slots AND this on-demand tool. Response pairs slots with a recommendation from get_gap_analysis + get_pace. Never books. |
@@ -169,6 +171,10 @@ Answer-generation rules (system prompt of the agent loop):
 2. Only facts from tool results; if a tool returned nothing, say so — never improvise lesson data.
 3. When mentioning lessons or notes, include their dates so the user can verify.
 4. Max 6 sentences unless asked for detail; Telegram-friendly formatting.
+5. Provenance labels on knowledge answers: from the KB → cite the section ("Rijprocedure B, §…");
+   from the live web fallback → prefix "from cbr.nl just now:"; from the model's general knowledge
+   (traffic law etc., not in any source) → prefix "not from the CBR docs — general knowledge,
+   verify in your theory book:". Never present an unsourced claim as a sourced one.
 
 Guardrail (code, after generation): every date and count in the answer must appear in the collected tool JSON (simple string/number containment check). On failure: one retry with a corrective note, then send with a ⚠️ prefix.
 
@@ -212,13 +218,15 @@ Mixed messages ("log today: parking ok. When's next lesson?") need no special ma
 
 **Weekly digest** — Sunday 18:00: lessons completed this week, skills that moved status, pace() verdict, suggested focus for next week. Same compose+check pattern.
 
+**KB freshness watchdog** (piggybacks on the weekly digest job): re-fetch the seeded cbr.nl source pages, compare content hashes; on change, add one line to the digest: "CBR page <name> changed — review knowledge/ update." Updating the KB stays a human decision — a site redesign must not silently rewrite the knowledge base.
+
 Digest facts must come only from the assembled JSON. If no data (no lessons this week), send the short honest version, not filler.
 
 ## 9. Build phases (each ends runnable; acceptance criteria included)
 
 **Phase 1 — skeleton (evening 1):** DB + seed skills + backfill (section 11) + bot answering /start + router wired + get_next_lessons/get_lesson_history + log_lesson via chat. ✔ Accept: "сегодня делали парковку, все ок" creates a note linked to the parking skill; "when is my next lesson" answers from DB; "what did we do on July 30?" returns the backfilled notes.
 
-**Phase 2 — brain (evening 2):** remaining read tools + gap analysis + semantic-layer functions + answer guardrail + get_cbr_info seeded. ✔ Accept: "what are my weak areas?" returns ranked gaps consistent with notes; "what's checked on bijzondere verrichtingen?" answers with CBR source; out-of-scope question ("what tires should I buy?") gets honest refusal.
+**Phase 2 — brain (evening 2):** remaining read tools + gap analysis + semantic-layer functions + answer guardrail + the docs stack: get_cbr_info seeded, Rijprocedure B converted to `knowledge/rijprocedure-b.md` (source: cbr.nl "Rijprocedure B" — Daria's PDF-conversion territory), cbr_search over knowledge/, web_search_cbr fallback (Tavily, cbr.nl-scoped, no write tools in that flow), provenance rule #5 active. ✔ Accept: "what are my weak areas?" returns ranked gaps consistent with notes; "can I fail for stalling?" answers from the Rijprocedure with a section citation; a KB-miss question (e.g. exam fees) uses the live fallback WITH the "from cbr.nl just now" label; a traffic-law question gets the "general knowledge" label; out-of-scope ("what tires should I buy?") still refuses honestly.
 
 **Phase 3 — ingestion (evening 3):** email poller + extraction + fixtures + dead-letter path + Telegram notify. ✔ Accept: dropping a fixture email into the test inbox creates a session exactly once even if the job runs twice.
 
@@ -270,7 +278,7 @@ Derived starting picture the gap analysis should reproduce: weak = roundabouts (
 ## 12. What Daria provides (blockers marked ⛔)
 
 - ⛔ TELEGRAM_BOT_TOKEN (BotFather) + first message to the bot (chat id)
-- ⛔ OPENROUTER_API_KEY
+- ⛔ LLM_API_KEY (the app's own OpenRouter key — see env vars note in section 2)
 - ⛔ 1–2 real On My Way emails (raw text) → fixtures + OMW_SENDER_FILTER
 - Gmail app password (Phase 3 only)
 - EXAM_DATE when known

@@ -324,7 +324,7 @@ import re
 import sys
 
 
-CHARS_NEVER_ESCAPE = "()-+&."   # these pandoc escapes are redundant
+CHARS_NEVER_ESCAPE = "()-+&."  # these pandoc escapes are redundant
 
 
 def fix_inline_code(match: re.Match) -> str:
@@ -338,26 +338,26 @@ def fix_inline_code(match: re.Match) -> str:
     if not (inner.startswith(open_) and inner.endswith(close_)):
         return inner
 
-    body = inner[len(open_):-len(close_)]
+    body = inner[len(open_) : -len(close_)]
 
     # 2. { } → HTML entities (Confluence does NOT normalize them back)
     body = body.replace("{", "&#123;").replace("}", "&#125;")
 
     # 3. < > → Unicode angles (Confluence normalizes &lt; &gt; back — hence Unicode)
     body = body.replace("<", "⟨").replace(">", "⟩")
-    body = body.replace("&lt;", "⟨").replace("&gt;", "⟩")   # migration
+    body = body.replace("&lt;", "⟨").replace("&gt;", "⟩")  # migration
 
     # 4. Markup pair markers → Unicode counterparts
-    body = body.replace("*", "∗")   # bold → asterisk operator
-    body = body.replace("-", "−")   # strikethrough → minus sign
-    body = body.replace("+", "＋")   # underline → fullwidth plus
-    body = body.replace("~", "∼")   # subscript → tilde operator
-    body = body.replace("^", "ˆ")   # superscript → modifier circumflex
+    body = body.replace("*", "∗")  # bold → asterisk operator
+    body = body.replace("-", "−")  # strikethrough → minus sign
+    body = body.replace("+", "＋")  # underline → fullwidth plus
+    body = body.replace("~", "∼")  # subscript → tilde operator
+    body = body.replace("^", "ˆ")  # superscript → modifier circumflex
 
     # 5. Named HTML entities — pandoc generates them for literal backslash etc.
     body = body.replace("&bsol;", "⧵")  # backslash → REVERSE SOLIDUS OPERATOR (U+29F5)
-    body = body.replace("&sol;", "/")    # forward slash → literal
-    body = body.replace("&num;", "#")    # number sign → literal
+    body = body.replace("&sol;", "/")  # forward slash → literal
+    body = body.replace("&num;", "#")  # number sign → literal
 
     return open_ + body + close_
 

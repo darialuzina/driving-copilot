@@ -61,7 +61,9 @@ async def clean_db() -> AsyncGenerator[None, None]:
 
 async def test_post_link_returns_201() -> None:
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test", follow_redirects=False) as client:
+    async with AsyncClient(
+        transport=transport, base_url="http://test", follow_redirects=False
+    ) as client:
         response = await client.post("/links", json={"url": "https://example.com"})
         assert response.status_code == 201
         body = response.json()

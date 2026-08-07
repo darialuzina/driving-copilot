@@ -69,10 +69,18 @@ import httpx
 _ALLOWED_SCHEMES = frozenset({"http", "https"})
 _MAX_BYTES = 10 * 1024 * 1024
 
+
 def _is_public_ip(ip_str: str) -> bool:
     ip = ipaddress.ip_address(ip_str)
-    return not (ip.is_private or ip.is_loopback or ip.is_link_local
-                or ip.is_multicast or ip.is_reserved or ip.is_unspecified)
+    return not (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    )
+
 
 async def fetch_preview(url: str) -> bytes:
     parsed = httpx.URL(url)
@@ -108,6 +116,7 @@ When a file path is built from user input (upload, download by name, read templa
 from pathlib import Path
 
 _UPLOADS = Path("/var/uploads").resolve()
+
 
 def read_user_file(name: str) -> str:
     candidate = (_UPLOADS / name).resolve()
@@ -215,7 +224,9 @@ subprocess.run(f"convert {user_file} out.jpg", shell=True)
 CONVERT = "/usr/bin/convert"
 subprocess.run(
     [CONVERT, str(user_file), str(out)],
-    check=True, timeout=30, capture_output=True,
+    check=True,
+    timeout=30,
+    capture_output=True,
     env={"PATH": "/usr/bin"},
 )
 ~~~
@@ -238,8 +249,10 @@ subprocess.run(
 import hmac
 import secrets
 
+
 def make_token() -> str:
     return secrets.token_urlsafe(32)
+
 
 def verify_token(provided: str, expected: str) -> bool:
     return hmac.compare_digest(provided.encode(), expected.encode())

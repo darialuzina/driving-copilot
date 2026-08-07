@@ -47,6 +47,7 @@ The project's development standard. This document is the single source of verifi
 def create_link(url, disabled=False):
     return {"id": 1, "url": url}
 
+
 # ✅
 def create_link(url: str, disabled: bool = False) -> Link:
     return Link(id=1, target_url=url, disabled=disabled)
@@ -61,8 +62,11 @@ Lets you write `X | None`, `list[X]` without issues on any Python version; annot
 ~~~python
 # ❌ Obsolete style
 from typing import Optional, List, Dict, Union
+
+
 def find(id: int) -> Optional[Link]: ...
 def items() -> List[Dict[str, int]]: ...
+
 
 # ✅ Modern style
 def find(id: int) -> Link | None: ...
@@ -75,6 +79,7 @@ def items() -> list[dict[str, int]]: ...
 # ❌
 def clear_cache(self):
     self._cache = {}
+
 
 # ✅
 def clear_cache(self) -> None:
@@ -173,6 +178,7 @@ def process_links(links: list[Link]) -> str:
     save_to_file(report)
     return report
 
+
 # ✅ Separated
 def calculate_active_rate(links: list[Link]) -> float: ...
 def format_rate(rate: float) -> str: ...
@@ -187,6 +193,7 @@ The service depends on a `Protocol`, not on a concrete implementation.
 class LinkRepositoryProtocol(Protocol):
     async def get_by_code(self, code: str) -> Link | None: ...
     async def update(self, link: Link) -> Link: ...
+
 
 class LinkService:
     def __init__(self, repo: LinkRepositoryProtocol) -> None:
@@ -253,9 +260,12 @@ Signs of a violation:
 # ❌
 def is_valid_title(title: str) -> bool:
     return bool(
-        title is not None and isinstance(title, str)
-        and len(title.strip()) > 0 and not title.strip() == ""
+        title is not None
+        and isinstance(title, str)
+        and len(title.strip()) > 0
+        and not title.strip() == ""
     )
+
 
 # ✅
 def is_valid_title(title: str) -> bool:
@@ -284,8 +294,10 @@ But: premature abstraction (a function used once, extracted "just in case") is w
 
 ~~~python
 # ❌ Magic numbers
-if len(title) > 255: ...
-if rate > 75: ...
+if len(title) > 255:
+    ...
+if rate > 75:
+    ...
 
 # ✅
 MAX_TITLE_LENGTH: int = 255
@@ -301,6 +313,7 @@ COMPLETION_RATE_EXCELLENT: float = 75.0
 ~~~python
 # ❌
 def process(items: list[str] = []) -> list[str]: ...
+
 
 # ✅
 def process(items: list[str] | None = None) -> list[str]:
@@ -462,6 +475,7 @@ def handle_event(event: dict[str, object]) -> str:
 ~~~python
 from typing import Self
 
+
 class QueryBuilder:
     def where(self, predicate: str) -> Self:
         self._predicates.append(predicate)
@@ -495,6 +509,7 @@ except* DatabaseError as eg:
 ~~~python
 # ❌ Old style (TypeAlias from typing)
 from typing import TypeAlias
+
 UserId: TypeAlias = int
 Maybe = list[int] | None
 
@@ -512,13 +527,16 @@ On 3.14 — use the new syntax. Keep the old `TypeAlias` import only when suppor
 # ✅
 from enum import StrEnum
 
+
 class LinkStatus(StrEnum):
     ACTIVE = "active"
     EXPIRED = "expired"
     DISABLED = "disabled"
 
+
 # Comparison with a plain string works directly
-if status == "active": ...
+if status == "active":
+    ...
 ~~~
 
 `StrEnum` over `Enum` saves boilerplate and works with JSON / DB / API without `.value`.
