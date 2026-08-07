@@ -66,6 +66,8 @@ TIMEZONE=Europe/Amsterdam
 
 ## 3. Data model (PostgreSQL — the SQL below is illustrative; implement as SQLAlchemy models + one Alembic migration)
 
+As-built type mapping (deliberate upgrades over the illustrative TEXT types): dates → `sa.Date`, `exam_relevant` → `Boolean`, `audit_log.payload` → `JSONB`; `audit_log` also carries an `idempotency_key` column.
+
 ```sql
 CREATE TABLE sessions (              -- driving lessons, from emails or manual
   id INTEGER PRIMARY KEY,
@@ -147,6 +149,8 @@ Router prompt requirements: closed label list with one-line definitions and 2 ex
 
 Low-confidence fallback: if the returned label is not exactly one of the six strings, retry once with ANSWER_MODEL; if still invalid → `other`.
 
+As built: the router uses JSON mode (`{"label": "..."}`) rather than bare text — more robust; plain-text labels are accepted as a graceful fallback. Every label carries at least one Russian AND one Dutch example (Daria writes ru/en/nl).
+
 ## 6. Tool registry (typed, all read except log_lesson)
 
 Implement as OpenAI function-calling tools. Every tool validates params before touching the DB and returns compact JSON. Every returned record includes its id (guardrail anchor).
@@ -154,7 +158,7 @@ Implement as OpenAI function-calling tools. Every tool validates params before t
 | Tool | Params | Returns | Notes |
 |---|---|---|---|
 | get_next_lessons | days_ahead int=14 | upcoming sessions | |
-| get_lesson_history | limit int=10 | past sessions + note counts | |
+| get_lesson_history | limit int=10 | past sessions + their notes (full notes, as built — richer than the original "note counts") | |
 | get_skill_progress | category str? (enum of 7) | per-skill: status, last note, last practiced | uses skill_status() |
 | get_gap_analysis | — | weak + not_started skills ranked by exam weight; pace() output | the star tool |
 | get_notes | skill str? , query str? | matching notes with dates | substring match ok in v1 |
