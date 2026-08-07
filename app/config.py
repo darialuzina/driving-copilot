@@ -11,7 +11,10 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # --- database (PostgreSQL via docker-compose, per .agents/agents/database.md) ---
-    database_url: str = "postgresql+psycopg://app:app@localhost:5433/app"
+    database_url: str = "postgresql+psycopg://app:app@localhost:5433/driving_copilot"
+    # Separate test database — tests must NEVER connect to the dev database.
+    # The guard fixture in tests/integration/conftest.py asserts the db name ends with _test.
+    test_database_url: str = "postgresql+psycopg://app:app@localhost:5433/driving_copilot_test"
 
     # --- Telegram ---
     telegram_bot_token: str = ""
