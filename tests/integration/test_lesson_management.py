@@ -162,6 +162,29 @@ async def test_add_lesson_rejects_bad_params(ctx: ToolContext) -> None:
         )
 
 
+async def test_add_lesson_rejects_past_date(ctx: ToolContext) -> None:
+    # DRIVE-5b: a past date for a *scheduled* lesson means the model guessed the year
+    # or mishandled a relative date. Fail loudly with today's date so it can correct.
+    from app.domain.errors import ToolValidationError
+
+    past = (ctx.today() - timedelta(days=1)).isoformat()
+    with pytest.raises(ToolValidationError) as exc_info:
+        await AddLessonTool().run(
+            {"date": past, "start_time": "15:00"}, ctx, idempotency_key=None
+        )
+    assert "past" in exc_info.value.reason
+    assert ctx.today().isoformat() in exc_info.value.reason
+
+
+async def test_add_lesson_accepts_today_date(ctx: ToolContext) -> None:
+    today_iso = ctx.today().isoformat()
+    result = await AddLessonTool().run(
+        {"date": today_iso, "start_time": "15:00"}, ctx, idempotency_key="add:today"
+    )
+    assert result["created"] is True
+    assert result["date"] == today_iso
+
+
 # --- cancel_lesson ---
 
 

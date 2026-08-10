@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 from structlog.testing import capture_logs
@@ -18,12 +19,19 @@ def _settings(tmp_path: Path) -> Settings:
     )
 
 
+class _StubCtx:
+    """Minimal ctx for the freeform path, which only needs today()."""
+
+    def today(self) -> date:
+        return date(2026, 8, 10)
+
+
 async def test_freeform_logs_llm_call_with_model_latency_tokens(tmp_path: Path) -> None:
     usage = FakeUsage(prompt_tokens=8, completion_tokens=2, total_tokens=10)
     client = FakeLlmClient(chat_responses=["hi there!"], chat_usages=[usage])
     agent = AgentService(client, _settings(tmp_path))
     with capture_logs() as logs:
-        reply = await agent.handle("hi", "smalltalk", phase1_tools(), ctx=None)  # type: ignore[arg-type]
+        reply = await agent.handle("hi", "smalltalk", phase1_tools(), _StubCtx())  # type: ignore[arg-type]
     assert reply == "hi there!"
     llm_calls = [e for e in logs if e["event"] == "llm.call"]
     assert len(llm_calls) == 1
@@ -40,7 +48,7 @@ async def test_freeform_logs_without_usage_when_absent(tmp_path: Path) -> None:
     client = FakeLlmClient(chat_responses=["no can do"])
     agent = AgentService(client, _settings(tmp_path))
     with capture_logs() as logs:
-        await agent.handle("what tires?", "other", phase1_tools(), ctx=None)  # type: ignore[arg-type]
+        await agent.handle("what tires?", "other", phase1_tools(), _StubCtx())  # type: ignore[arg-type]
     llm_calls = [e for e in logs if e["event"] == "llm.call"]
     assert len(llm_calls) == 1
     assert llm_calls[0]["model"] == "answer"

@@ -1,6 +1,51 @@
 from __future__ import annotations
 
+from datetime import date
+
 # Prompts are versioned artifacts (ai.md). Model IDs never live here — they come from env.
+
+_WEEKDAYS = (
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+)
+
+
+def today_line(today: date) -> str:
+    """The current-date context line. Recomputed per message — never cached at process
+    start — so the model always sees the real today and weekday for relative-date
+    expressions ('tuesday', 'yesterday', 'next friday').
+    """
+    return f"Today is {_WEEKDAYS[today.weekday()]} {today.isoformat()}."
+
+
+def _inject_today(base: str, today: date) -> str:
+    """Prepend the today line to a prompt. If the prompt opens with a '#1 MUST FOLLOW'
+    rule (the only reliable slot per ai.md), insert the today line *after* that first
+    line so the must-follow rule stays in position #1.
+    """
+    line = today_line(today)
+    first_nl = base.find("\n")
+    if first_nl != -1 and base[:first_nl].lstrip().startswith("#1"):
+        return base[: first_nl + 1] + line + "\n" + base[first_nl + 1 :]
+    return line + "\n" + base
+
+
+def router_system_prompt(today: date) -> str:
+    return _inject_today(ROUTER_SYSTEM_PROMPT, today)
+
+
+def answer_system_prompt(today: date) -> str:
+    return _inject_today(ANSWER_SYSTEM_PROMPT, today)
+
+
+def refusal_system_prompt(today: date) -> str:
+    return _inject_today(REFUSAL_SYSTEM_PROMPT, today)
+
 
 ROUTER_SYSTEM_PROMPT = """\
 You are the intent router for Daria's driving-exam copilot (a Telegram bot).
@@ -50,7 +95,7 @@ Rules:
 1. Only facts from tool results. If a tool returned nothing, say so plainly — never invent lesson data, dates, or counts.
 2. When you mention a lesson or a note, include its date so Daria can verify it.
 3. To log what was practiced, call log_lesson with the date, the practiced skills (English names, with assessment good|ok|needs_attention|not_practiced and a short note). Then confirm what was logged and flag any unmatched skills.
-4. To record a lesson Daria has booked (e.g. in the On My Way app), call add_lesson with the date, start_time (HH:MM), optional end_time and instructor. To cancel a recorded lesson, call cancel_lesson with the session_id or the date. Confirm the result plainly. This only changes the record here — you cannot book or cancel in the On My Way app; point Daria there for that.
+4. To record a lesson Daria has booked (e.g. in your driving school's booking app), call add_lesson with the date, start_time (HH:MM), optional end_time and instructor. To cancel a recorded lesson, call cancel_lesson with the session_id or the date. Confirm the result plainly. This only changes the record here — you cannot book or cancel in the booking app; point Daria there for that. add_lesson only accepts today or a future date; log_lesson only accepts today or a date within the last 30 days.
 5. Max 6 sentences unless Daria asks for detail. Telegram-friendly. Formatting: use HTML tags <b>...</b> for bold and <i>...</i> for italic — nothing else. Do NOT use markdown asterisks (*), double underscores, backticks, markdown headers, or markdown tables; the message is sent as Telegram HTML, so markdown would render as literal punctuation.
 6. Provenance labels on knowledge (docs) answers:
    - from the knowledge base (get_cbr_info / cbr_search): cite the section, e.g. "Rijprocedure B, §3.7" or "Rijprocedure B, §Toepassing Hoofdstuk 1".
@@ -59,6 +104,7 @@ Rules:
    Never present an unsourced claim as a sourced one. If cbr_search returns nothing and web_search_cbr is unavailable or also returns nothing, say so plainly — do not invent CBR content.
 7. When reporting pace, the pace tool returns a `verdict` string: `no_exam_date` (no exam date is set), `on_track`, or `off_track`. If the verdict is `no_exam_date`, say there is no exam date set yet and report the lessons_left and weak_or_missing_count — never say "off track" or "on track" when the verdict is `no_exam_date`.
 8. End your answer with the information. Do not offer follow-up actions and do not ask follow-up questions. This bot has no conversation memory, so do not imply it does — no "Would you like me to ...?", "Let me know if ...", "Should I ...?" or similar. State what you found and stop.
+9. If required information is missing (a date, a time, a skill name, etc.), do NOT ask a bare clarifying question. This bot has no conversation memory: a partial reply cannot be joined with the previous message. Instead, tell Daria to RESEND THE FULL REQUEST in one single message, with a concrete example. Reply in Daria's language. Example (Russian): 'Пришлите одним сообщением: "урок 2026-08-18 15:00 с Marco"'. Example (English): 'Send it in one message: "lesson 2026-08-18 15:00 with Marco"'. Never ask "which date?" or "what time?" on its own.
 """
 
 REFUSAL_SYSTEM_PROMPT = """\
@@ -67,7 +113,7 @@ You are Daria's driving-lesson copilot. Daria asked for something you cannot do.
 Answer honestly that you can't help with that, in 1-2 friendly sentences, and mention what you CAN do:
 look up upcoming and past lessons and notes, analyse your weak areas and pace against the CBR skills,
 look up CBR exam knowledge, log what was practiced in a lesson, and record or cancel a lesson Daria
-booked in the On My Way app. You cannot book or reschedule lessons in the On My Way app — point there.
+booked in your driving school's booking app. You cannot book or reschedule lessons in the booking app — point there.
 Formatting: use HTML <b>...</b> and <i>...</i> only if needed; no markdown. Do not ask follow-up
 questions — this bot has no conversation memory.
 """

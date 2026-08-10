@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import re
+from datetime import date
 
 from app.bot import START_TEXT
 from app.services.prompts import (
     ANSWER_SYSTEM_PROMPT,
     REFUSAL_SYSTEM_PROMPT,
     ROUTER_SYSTEM_PROMPT,
+    answer_system_prompt,
+    refusal_system_prompt,
+    router_system_prompt,
+    today_line,
 )
 
 LABELS = ("lookup", "analytics", "log", "docs", "smalltalk", "other")
@@ -78,3 +83,49 @@ def test_start_text_lists_capabilities_no_phase_numbers() -> None:
     assert "Phase" not in START_TEXT
     assert "look up" in START_TEXT.lower()
     assert "log what you practiced" in START_TEXT.lower()
+
+
+# --- DRIVE-5b: today+weekday injection (per message) ---
+
+
+def test_today_line_includes_weekday_and_iso_date() -> None:
+    # 2026-08-10 is a Monday.
+    line = today_line(date(2026, 8, 10))
+    assert line == "Today is Monday 2026-08-10."
+
+
+def test_router_system_prompt_prepends_today_line() -> None:
+    prompt = router_system_prompt(date(2026, 8, 10))
+    assert prompt.startswith("Today is Monday 2026-08-10.\n")
+    # The router prompt body is preserved verbatim below the today line.
+    assert ROUTER_SYSTEM_PROMPT in prompt
+
+
+def test_answer_system_prompt_keeps_must_follow_in_position_one() -> None:
+    prompt = answer_system_prompt(date(2026, 8, 10))
+    # The #1 MUST FOLLOW rule must remain the first line (ai.md: only reliable slot).
+    first_line = prompt.splitlines()[0]
+    assert first_line.startswith("#1 MUST FOLLOW")
+    # The today line is injected right after the #1 rule.
+    assert "Today is Monday 2026-08-10." in prompt
+
+
+def test_refusal_system_prompt_keeps_must_follow_in_position_one() -> None:
+    prompt = refusal_system_prompt(date(2026, 8, 10))
+    first_line = prompt.splitlines()[0]
+    assert first_line.startswith("#1 MUST FOLLOW")
+    assert "Today is Monday 2026-08-10." in prompt
+
+
+def test_prompts_no_on_my_way_app_references() -> None:
+    assert "On My Way" not in ANSWER_SYSTEM_PROMPT
+    assert "On My Way" not in REFUSAL_SYSTEM_PROMPT
+    assert "driving school's booking app" in ANSWER_SYSTEM_PROMPT
+    assert "driving school's booking app" in REFUSAL_SYSTEM_PROMPT
+
+
+def test_answer_prompt_clarification_rule_present() -> None:
+    # The bot has no memory: missing info must trigger a "resend the full request"
+    # instruction with an example, never a bare clarifying question.
+    assert "RESEND THE FULL REQUEST" in ANSWER_SYSTEM_PROMPT
+    assert "Пришлите одним сообщением" in ANSWER_SYSTEM_PROMPT

@@ -110,3 +110,16 @@ def test_get_cbr_info_schema_restricts_topic_enum() -> None:
     assert "exam_structure" in str(schema)
     assert "bijzondere_verrichtingen" in str(schema)
     assert "self_reflection" in str(schema)
+
+
+def test_manual_lesson_tool_descriptions_have_no_on_my_way_app() -> None:
+    # DRIVE-5b: the school is changing; tool descriptions (which are prompts) must not
+    # name the old booking app.
+    assert "On My Way" not in AddLessonTool().description
+    assert "On My Way" not in CancelLessonTool().description
+    assert "booking app" in AddLessonTool().description
+    assert "booking app" in CancelLessonTool().description
+
+
+def test_add_lesson_description_states_future_only() -> None:
+    assert "today or future" in AddLessonTool().description
