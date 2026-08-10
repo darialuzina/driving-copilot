@@ -160,11 +160,13 @@ Implement as OpenAI function-calling tools. Every tool validates params before t
 | get_next_lessons | days_ahead int=14 | upcoming sessions | |
 | get_lesson_history | limit int=10 | past sessions + their notes (full notes, as built — richer than the original "note counts") | |
 | get_skill_progress | category str? (enum of 7) | per-skill: status, last note, last practiced | uses skill_status() |
-| get_gap_analysis | — | weak + not_started skills ranked by exam weight; pace() output | the star tool |
+| get_gap_analysis | — | weak + not_started skills ranked by exam weight; pace() output | the star tool. Tie-breaker (deterministic): equal rank → higher evidence_count first, then alphabetical by skill name. |
 | get_notes | skill str? , query str? | matching notes with dates | substring match ok in v1 |
 | get_pace | — | pace() output | |
 | get_cbr_info | topic str (enum: exam_structure, bijzondere_verrichtingen, assessment_criteria, self_reflection) | seeded CBR content with source url | content seeded at build time from cbr.nl; RAG-lite, no vectors needed in v1 |
 | cbr_search | query str | matching sections from knowledge/ with heading + source | Phase 2. Keyword/heading search over the converted Rijprocedure B + seeded pages. No embeddings unless the corpus outgrows keyword search. |
+| get_toc | — | full Rijprocedure section tree (ids, en+nl titles, real section numbers) | As built (DRIVE-4b). Agentic navigation: docs path may read the ToC, then fetch sections. |
+| get_section | section_id str | that section's verbatim en AND nl text + real section number | As built (DRIVE-4b). Citations always use real document section numbers. |
 | web_search_cbr | query str | live results, cbr.nl-scoped (Tavily) | Phase 2, fallback ONLY when cbr_search returns nothing (fees, waiting times — things that change). Untrusted content: this flow gets no write tools. |
 | log_lesson | date str=today, skills list[{skill,assessment,note}], general_note str? | created note ids | WRITE, tier: auto-approve. Skill names fuzzy-matched against skills table; unmatched → stored as general note + flagged in reply. Writes audit_log. |
 | trigger_email_check | — | new/changed sessions found | Phase 3. Runs the email-ingest job on demand ("check my mail for new bookings") instead of waiting for the 15-min cron. Read-side, auto-approve. |
@@ -223,6 +225,8 @@ Mixed messages ("log today: parking ok. When's next lesson?") need no special ma
 **Weekly digest** — Sunday 18:00: lessons completed this week, skills that moved status, pace() verdict, suggested focus for next week. Same compose+check pattern.
 
 **KB freshness watchdog** (piggybacks on the weekly digest job): re-fetch the seeded cbr.nl source pages, compare content hashes; on change, add one line to the digest: "CBR page <name> changed — review knowledge/ update." Updating the KB stays a human decision — a site redesign must not silently rewrite the knowledge base.
+
+**KB as built (DRIVE-4b):** source of truth `knowledge/sources/rijprocedure-b.pdf` (official CBR document). `rijprocedure-b.nl.md` = verbatim Dutch, 297 sections, structure from the PDF's own embedded ToC (script: `scripts/build_rijprocedure_nl.py`, pymupdf). `rijprocedure-b.en.md` = section-by-section DeepL translation (`scripts/build_rijprocedure_en.py`, DEEPL_API_KEY, glossary for manoeuvre names, Dutch term annotated on first use) — no LLM in the translation path. get_cbr_info topic files: verbatim excerpts + translation with source URL and fetch date. Fidelity tests: every nl heading exists in the PDF extraction; nl/en length ratio 0.7–1.6 per section; identical section counts. The original curated `rijprocedure-b.md` is deleted.
 
 Digest facts must come only from the assembled JSON. If no data (no lessons this week), send the short honest version, not filler.
 
