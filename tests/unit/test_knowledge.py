@@ -37,11 +37,12 @@ def test_get_topic_unknown_topic_returns_structured_error(kb: KnowledgeBase) -> 
 
 
 def test_search_finds_stalling_assessment_section(kb: KnowledgeBase) -> None:
-    matches = kb.search("stalling fail exam")
-    assert matches, "expected at least one match for stalling/fail/exam"
-    # The assessment-criteria file has the 'Can you fail for stalling?' section.
+    # Stalling is a clutch-handling question; the verbatim Toepassing chapter
+    # covers it under "Bediening koppeling" / "Clutch operation".
+    matches = kb.search("clutch stall koppeling")
+    assert matches, "expected at least one match for clutch/stall/koppeling"
     headings = " | ".join(m.heading for m in matches)
-    assert "stall" in headings.lower() or "fail" in headings.lower()
+    assert "clutch" in headings.lower() or "koppeling" in headings.lower()
     assert all(m.source.startswith("https://www.cbr.nl") for m in matches)
 
 
