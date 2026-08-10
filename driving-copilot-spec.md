@@ -113,8 +113,9 @@ CREATE TABLE audit_log (             -- every write, who/what/when
   no notes ever → `not_started`; latest is needs_attention → `weak`;
   last two are good → `solid`; otherwise → `in_progress`.
 - `pace()`: lessons remaining before EXAM_DATE vs count of skills not `solid`.
-  Returns lessons_left, weak_or_missing_count, on_track boolean
-  (on_track = lessons_left >= weak_or_missing_count).
+  Returns lessons_left, weak_or_missing_count, and verdict:
+  `no_exam_date` (EXAM_DATE unset — on_track is None, never False; counts still returned) |
+  `on_track` (lessons_left >= weak_or_missing_count) | `off_track`.
 - `stale(skill)`: `solid` but not practiced in 21+ days → flag for refresh.
 
 These are the only definitions of these words in the system. Tools call these functions; answers repeat their output.
@@ -169,6 +170,8 @@ Implement as OpenAI function-calling tools. Every tool validates params before t
 | get_section | section_id str | that section's verbatim en AND nl text + real section number | As built (DRIVE-4b). Citations always use real document section numbers. |
 | web_search_cbr | query str | live results, cbr.nl-scoped (Tavily) | Phase 2, fallback ONLY when cbr_search returns nothing (fees, waiting times — things that change). Untrusted content: this flow gets no write tools. |
 | log_lesson | date str=today, skills list[{skill,assessment,note}], general_note str? | created note ids | WRITE, tier: auto-approve. Skill names fuzzy-matched against skills table; unmatched → stored as general note + flagged in reply. Writes audit_log. |
+| add_lesson | date, start_time, end_time?, instructor? | created/updated session | WRITE, write_auto (DRIVE-5). Idempotent: hash key same-day AND (date,start_time) dedup across days — re-adding a booking never duplicates. Routed via the log label (no 7th router label — router stays coarse path-safety; the agent loop picks the tool). |
+| cancel_lesson | date or session_id | cancelled session (or no-op) | WRITE, write_auto (DRIVE-5). No-op on missing/already-cancelled. Audit-logged. |
 | trigger_email_check | — | new/changed sessions found | Phase 3. Runs the email-ingest job on demand ("check my mail for new bookings") instead of waiting for the 15-min cron. Read-side, auto-approve. |
 | check_slots | instructor str?, days_ahead int=7 | open slots matching filters | STRETCH (feature flag, after the app-API investigation). Same watcher code exposed two ways: background push on new matching slots AND this on-demand tool. Response pairs slots with a recommendation from get_gap_analysis + get_pace. Never books. |
 
@@ -181,6 +184,12 @@ Answer-generation rules (system prompt of the agent loop):
    from the live web fallback → prefix "from cbr.nl just now:"; from the model's general knowledge
    (traffic law etc., not in any source) → prefix "not from the CBR docs — general knowledge,
    verify in your theory book:". Never present an unsourced claim as a sourced one.
+   (Enforced in code since DRIVE-4 fixes: docs-path answers must carry exactly one marker, retry-then-⚠️.)
+6. As built (DRIVE-5): answers end with the information — no follow-up offers or questions
+   (the bot has no conversation memory and must not imply it does). Pace phrasing follows the
+   pace() verdict (no_exam_date is neutral, never "not on track").
+7. As built (DRIVE-5): replies are sent with parse_mode=HTML via telegram_format.py
+   (<b>/<i>, markdown stripped, &<> escaped) — no literal asterisks in Telegram.
 
 Guardrail (code, after generation): every date and count in the answer must appear in the collected tool JSON (simple string/number containment check). On failure: one retry with a corrective note, then send with a ⚠️ prefix.
 
