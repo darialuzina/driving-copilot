@@ -154,3 +154,70 @@ async def test_agent_degrades_on_empty_completion(ctx: ToolContext, settings: Se
     agent = AgentService(client, settings)
     reply = await agent.handle("hi", "lookup", phase1_tools(), ctx)
     assert "couldn't" in reply.lower()
+
+
+async def test_agent_loop_logs_llm_calls_with_model_latency_tokens(
+    ctx: ToolContext, settings: Settings
+) -> None:
+    from structlog.testing import capture_logs
+
+    from tests.conftest import FakeUsage
+
+    client = FakeLlmClient(
+        completions=[
+            make_completion(
+                calls=[_tool_call("c1", "get_next_lessons", {})],
+                usage=FakeUsage(prompt_tokens=10, completion_tokens=1, total_tokens=11),
+            ),
+            make_completion(
+                content="You have no upcoming lessons scheduled.",
+                usage=FakeUsage(prompt_tokens=20, completion_tokens=5, total_tokens=25),
+            ),
+        ]
+    )
+    agent = AgentService(client, settings)
+    with capture_logs() as logs:
+        reply = await agent.handle("when is my next lesson?", "lookup", phase1_tools(), ctx)
+    assert "no upcoming" in reply.lower()
+    llm_calls = [e for e in logs if e["event"] == "llm.call"]
+    # One call per turn (tool call turn + answer turn).
+    assert len(llm_calls) == 2
+    for call in llm_calls:
+        assert call["model"] == "answer"
+        assert call["latency_ms"] >= 0
+        assert "total_tokens" in call
+    assert llm_calls[0]["total_tokens"] == 11
+    assert llm_calls[1]["total_tokens"] == 25
+    answer_events = [e for e in logs if e["event"] == "agent.answer"]
+    assert len(answer_events) == 1
+    assert answer_events[0]["model"] == "answer"
+    assert answer_events[0]["total_tokens"] == 36
+
+
+async def test_agent_dedups_identical_log_lesson_retries_via_hash_key(
+    session: AsyncSession, ctx: ToolContext, settings: Settings
+) -> None:
+    # One turn issues log_lesson twice with identical arguments. The hash-based
+    # idempotency key must collide -> only one note + one audit row are written.
+    same_args: dict[str, object] = {
+        "date": "today",
+        "skills": [{"skill": "parking", "assessment": "good", "note": "did parking"}],
+    }
+    client = FakeLlmClient(
+        completions=[
+            make_completion(
+                calls=[
+                    _tool_call("c1", "log_lesson", same_args),
+                    _tool_call("c2", "log_lesson", same_args),
+                ]
+            ),
+            make_completion(content="Logged ✓ parking (good)."),
+        ]
+    )
+    agent = AgentService(client, settings)
+    await agent.handle("сегодня делали парковку, все ок", "log", phase1_tools(), ctx)
+
+    notes = (await session.execute(select(LessonNoteModel))).scalars().all()
+    assert len(notes) == 1
+    audits = (await session.execute(select(AuditLogModel))).scalars().all()
+    assert len(audits) == 1

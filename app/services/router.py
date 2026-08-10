@@ -13,7 +13,13 @@ from pydantic import BaseModel, ValidationError
 
 from app.config import Settings
 from app.domain.errors import RouterUnavailableError
-from app.services.llm_types import CompletionLike
+from app.services.llm_types import (
+    ChatResult,
+    CompletionLike,
+    TokenUsage,
+    to_token_usage,
+    usage_log_kwargs,
+)
 from app.services.prompts import ROUTER_SYSTEM_PROMPT
 
 log = structlog.get_logger()
@@ -26,7 +32,9 @@ class RouterDecision(BaseModel):
 
 
 class LlmClient(Protocol):
-    async def chat(self, model: str, system: str, user: str, *, json_mode: bool = False) -> str: ...
+    async def chat(
+        self, model: str, system: str, user: str, *, json_mode: bool = False
+    ) -> ChatResult: ...
 
     async def chat_with_tools(
         self,
@@ -43,7 +51,9 @@ class OpenRouterLlmClient:
     def __init__(self, api_key: str, base_url: str) -> None:
         self._client = AsyncOpenAI(api_key=api_key, base_url=base_url)
 
-    async def chat(self, model: str, system: str, user: str, *, json_mode: bool = False) -> str:
+    async def chat(
+        self, model: str, system: str, user: str, *, json_mode: bool = False
+    ) -> ChatResult:
         messages: list[ChatCompletionMessageParam] = [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
@@ -59,12 +69,13 @@ class OpenRouterLlmClient:
             completion = await self._client.chat.completions.create(
                 model=model, messages=messages, temperature=0.0
             )
+        usage = to_token_usage(getattr(completion, "usage", None))
         # OpenRouter/models occasionally return a completion with no usable choices
         # (reasoning models, transient errors). Degrade to an empty string so the
         # router falls back to the answer model / "other" instead of hard-failing.
         if not completion.choices:
-            return ""
-        return completion.choices[0].message.content or ""
+            return ChatResult(content="", usage=usage)
+        return ChatResult(content=completion.choices[0].message.content or "", usage=usage)
 
     async def chat_with_tools(
         self,
@@ -96,19 +107,22 @@ class RouterService:
 
     async def classify(self, message: str) -> str:
         started = time.monotonic()
-        label = await self._classify_once(self._settings.router_model, message)
+        model, usage, label = await self._classify_once(self._settings.router_model, message)
         if label not in VALID_LABELS:
             # Low-confidence fallback: retry once with the capable answer model.
-            label = await self._classify_once(self._settings.answer_model, message)
+            model, usage, label = await self._classify_once(self._settings.answer_model, message)
         if label not in VALID_LABELS:
             label = "other"
         elapsed_ms = int((time.monotonic() - started) * 1000)
-        await self._log(message, label, elapsed_ms)
+        await self._log(message, label, elapsed_ms, model, usage)
         return label
 
-    async def _classify_once(self, model: str, message: str) -> str:
+    async def _classify_once(
+        self, model: str, message: str
+    ) -> tuple[str, TokenUsage | None, str]:
+        started = time.monotonic()
         try:
-            raw = await self._client.chat(
+            result = await self._client.chat(
                 model=model,
                 system=ROUTER_SYSTEM_PROMPT,
                 user=message,
@@ -116,10 +130,31 @@ class RouterService:
             )
         except Exception as exc:  # network / auth — honest error path, no invented label.
             raise RouterUnavailableError(f"router LLM call failed: {exc}") from exc
-        return extract_label(raw)
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        log.info(
+            "llm.call",
+            caller="router",
+            model=model,
+            latency_ms=elapsed_ms,
+            **usage_log_kwargs(result.usage),
+        )
+        return model, result.usage, extract_label(result.content)
 
-    async def _log(self, message: str, label: str, elapsed_ms: int) -> None:
-        record: dict[str, object] = {"label": label, "message": message, "elapsed_ms": elapsed_ms}
+    async def _log(
+        self,
+        message: str,
+        label: str,
+        elapsed_ms: int,
+        model: str,
+        usage: TokenUsage | None,
+    ) -> None:
+        record: dict[str, object] = {
+            "label": label,
+            "message": message,
+            "model": model,
+            "latency_ms": elapsed_ms,
+            **usage_log_kwargs(usage),
+        }
         log.info("router.classified", **record)
         await self._append_jsonl(record)
 

@@ -41,5 +41,7 @@ uv run pytest -q
 
 DB schema + seeded skills + backfill (spec section 11), Telegram bot with `/start`,
 intent router (6 labels), and tools: `get_next_lessons`, `get_lesson_history`,
-`log_lesson` (auto-approved write via chat). Analytics, gap analysis, CBR knowledge,
-email ingestion, digests, and evals arrive in later phases.
+`log_lesson` (auto-approved write via chat). Router guardrail (date/count/id containment),
+hash-based write idempotency, structured LLM-call logging, and the starter golden eval
+set (`evals/golden.yaml`) are in place. Analytics, gap analysis, CBR knowledge,
+email ingestion, and digests arrive in later phases.

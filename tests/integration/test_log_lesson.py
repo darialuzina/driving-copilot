@@ -91,3 +91,41 @@ async def test_log_lesson_unmatched_skill_becomes_general_note(
     note = await session.get(LessonNoteModel, result["note_ids"][0])
     assert note is not None
     assert note.skill_id is None  # stored as a general note
+
+
+async def test_log_lesson_distinct_calls_distinct_keys(
+    session: AsyncSession, ctx: ToolContext
+) -> None:
+    """Two genuinely different log calls on the same day must not collide."""
+    from app.services.agent import make_write_idempotency_key
+
+    today = "2026-08-10"
+    k1 = make_write_idempotency_key(
+        "log_lesson",
+        {"date": "today", "skills": [{"skill": "parking", "assessment": "good", "note": "ok"}]},
+        today,
+    )
+    k2 = make_write_idempotency_key(
+        "log_lesson",
+        {
+            "date": "today",
+            "skills": [{"skill": "roundabouts", "assessment": "needs_attention", "note": "bad"}],
+        },
+        today,
+    )
+    tool = LogLessonTool()
+    await tool.run(
+        {"date": "today", "skills": [{"skill": "parking", "assessment": "good", "note": "ok"}]},
+        ctx,
+        idempotency_key=k1,
+    )
+    await tool.run(
+        {
+            "date": "today",
+            "skills": [{"skill": "roundabouts", "assessment": "needs_attention", "note": "bad"}]
+        },
+        ctx,
+        idempotency_key=k2,
+    )
+    notes = (await session.execute(select(LessonNoteModel))).scalars().all()
+    assert len(notes) == 2

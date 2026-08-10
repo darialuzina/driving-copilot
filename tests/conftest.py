@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, cast
 
-from app.services.llm_types import CompletionLike
+from app.services.llm_types import ChatResult, CompletionLike, UsageLike, to_token_usage
 
 
 @dataclass
@@ -30,12 +30,24 @@ class FakeChoice:
 
 
 @dataclass
+class FakeUsage:
+    """Matches app.services.llm_types.UsageLike for test completions."""
+
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+
+
+@dataclass
 class FakeCompletion:
     choices: list[FakeChoice]
+    usage: UsageLike | None = field(default=None)
 
 
 def make_completion(
-    content: str | None = None, calls: list[dict[str, Any]] | None = None
+    content: str | None = None,
+    calls: list[dict[str, Any]] | None = None,
+    usage: UsageLike | None = None,
 ) -> FakeCompletion:
     tool_calls = None
     if calls:
@@ -47,7 +59,8 @@ def make_completion(
             for c in calls
         ]
     return FakeCompletion(
-        choices=[FakeChoice(message=FakeMessage(content=content, tool_calls=tool_calls))]
+        choices=[FakeChoice(message=FakeMessage(content=content, tool_calls=tool_calls))],
+        usage=usage,
     )
 
 
@@ -58,21 +71,27 @@ class FakeLlmClient:
         self,
         chat_responses: list[str] | None = None,
         completions: list[FakeCompletion] | None = None,
+        chat_usages: list[UsageLike | None] | None = None,
     ) -> None:
         self.chat_responses = list(chat_responses or [])
         self.completions = list(completions or [])
+        self.chat_usages = list(chat_usages or [])
         self.chat_calls: list[dict[str, Any]] = []
         self.completion_calls: list[dict[str, Any]] = []
 
     async def chat(
         self, model: str, system: str, user: str, *, json_mode: bool = False
-    ) -> str:
+    ) -> ChatResult:
         self.chat_calls.append(
             {"model": model, "system": system, "user": user, "json_mode": json_mode}
         )
         if not self.chat_responses:
             raise AssertionError("no canned chat response")
-        return self.chat_responses.pop(0)
+        content = self.chat_responses.pop(0)
+        usage: UsageLike | None = None
+        if self.chat_usages:
+            usage = self.chat_usages.pop(0)
+        return ChatResult(content=content, usage=to_token_usage(usage))
 
     async def chat_with_tools(
         self,
