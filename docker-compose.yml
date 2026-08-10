@@ -7,6 +7,9 @@ services:
       POSTGRES_USER: app
       POSTGRES_PASSWORD: app
       POSTGRES_DB: driving_copilot
+      # Digests must fire on Amsterdam time; the scheduler compares "now" to
+      # lesson dates, so the database container's clock must be in Europe/Amsterdam.
+      TZ: Europe/Amsterdam
     ports:
       - "${POSTGRES_PORT:-5433}:5432"
     volumes:
@@ -17,6 +20,43 @@ services:
       interval: 3s
       timeout: 3s
       retries: 10
+    restart: unless-stopped
+
+  bot:
+    build: .
+    # The bot uses long polling (Application.run_polling) — outbound only.
+    # No inbound ports, no published port, no load balancer, no TLS.
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Override the dev DATABASE_URL from .env: inside compose the bot reaches
+      # the database on the internal `db` host, port 5432.
+      DATABASE_URL: postgresql+psycopg://app:app@db:5432/driving_copilot
+      # Same TZ as the db so the scheduler and digests are on Amsterdam time.
+      TZ: Europe/Amsterdam
+    volumes:
+      # Router eval log (jsonl) — useful to inspect on the host; not a secret.
+      - ./logs:/app/logs
+
+  backup:
+    # Nightly pg_dump at 03:00 Amsterdam time to a named volume; keeps the last 7.
+    # Uses the same postgres image as db so pg_dump's major version matches.
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      TZ: Europe/Amsterdam
+      PGPASSWORD: app
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - backups:/backups
+      - ./docker/backup.sh:/backup.sh:ro
+    entrypoint: ["/bin/sh", "/backup.sh"]
 
 volumes:
   pgdata:
+  backups:

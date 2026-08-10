@@ -45,6 +45,20 @@ Phase 2 live smoke (the three provenance label paths against the real LLM + Tavi
 PYTHONPATH=. uv run python scripts/phase2_live_smoke.py
 ```
 
+## Deploy
+
+Production runs on a single Google Cloud `e2-micro` (always-free tier) under
+docker compose with three services: `db`, `bot`, `backup`. The bot uses long
+polling — outbound only, no inbound ports/TLS. Full instructions (provision,
+install docker, clone, ship `.env`, `make deploy-check`, `docker compose up
+-d`, verify `/start`, update, backup/restore, logs) are in
+[`RUNBOOK.md`](RUNBOOK.md).
+
+```bash
+make deploy-check   # validate .env keys (names only) + compose config
+docker compose up -d --build
+```
+
 ## Phase 2 (current)
 
 Everything in Phase 1 plus the "brain": the semantic layer (`skill_status`, `pace`,
