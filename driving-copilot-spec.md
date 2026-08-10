@@ -145,11 +145,11 @@ One call to ROUTER_MODEL. Output: exactly one label. Labels:
 - `smalltalk` — greetings/thanks
 - `other` — everything else → honest refusal path
 
-Router prompt requirements: closed label list with one-line definitions and 2 examples each (include one Russian and one Dutch example — Daria writes in ru/en/nl); answer with the label only. Log every (message, label) pair to a jsonl file — this becomes eval data.
+Router prompt requirements: closed label list with one-line definitions and 2 examples each — at least one Russian and one English per label, plus 2–3 examples overall with Dutch driving terms embedded in ru/en sentences ("how did my rotondes go?", "сегодня делали bijzondere verrichtingen"). Daria writes ru/en only; Dutch appears as embedded vocabulary, never full sentences. Answer with the label only. Log every (message, label) pair to a jsonl file — this becomes eval data.
 
 Low-confidence fallback: if the returned label is not exactly one of the six strings, retry once with ANSWER_MODEL; if still invalid → `other`.
 
-As built: the router uses JSON mode (`{"label": "..."}`) rather than bare text — more robust; plain-text labels are accepted as a graceful fallback. Every label carries at least one Russian AND one Dutch example (Daria writes ru/en/nl).
+As built: the router uses JSON mode (`{"label": "..."}`) rather than bare text — more robust; plain-text labels are accepted as a graceful fallback. Every label carries at least one Russian and one English example; mixed ru/en+Dutch-term examples included per the requirement above.
 
 ## 6. Tool registry (typed, all read except log_lesson)
 
@@ -242,7 +242,7 @@ Digest facts must come only from the assembled JSON. If no data (no lessons this
 
 ## 10. Golden set (starter — extend to ~25; store as evals/golden.yaml)
 
-Router cases (message → expected label): "when is my next lesson?" → lookup · "когда у меня следующий урок?" → lookup · "how is my parking?" → analytics · "wat zijn mijn zwakke punten?" → analytics · "today we practiced merging, went fine" → log · "сегодня тренировали парковку, пока плохо" → log · "what do they check in the exam?" → docs · "hi!" → smalltalk · "what tires should I buy?" → other · "book me a lesson tomorrow" → other (v1 cannot book; answer must say so and mention the app).
+Router cases (message → expected label): "when is my next lesson?" → lookup · "когда у меня следующий урок?" → lookup · "how is my parking?" → analytics · "how did my rotondes go?" → analytics (Dutch term embedded in English) · "today we practiced merging, went fine" → log · "сегодня делали bijzondere verrichtingen, нормально" → log (Dutch term embedded in Russian) · "what do they check in the exam?" → docs · "hi!" → smalltalk · "what tires should I buy?" → other · "book me a lesson tomorrow" → other (v1 cannot book; answer must say so and mention the app).
 
 End-to-end cases (question + DB fixture → answer must contain / must not contain): weak-areas question → must name the skill with two needs_attention notes, must not name skills without notes; next-lesson question with empty DB → must say no lessons found, must not invent a date.
 
