@@ -46,6 +46,16 @@ class SessionRepository:
         result = await self._session.execute(stmt)
         return result.scalars().first()
 
+    async def get_by_id(self, session_id: int) -> SessionModel | None:
+        return await self._session.get(SessionModel, session_id)
+
+    async def set_status(self, session_id: int, status: str) -> None:
+        """Update a session's status (used by cancel_lesson)."""
+        model = await self._session.get(SessionModel, session_id)
+        if model is not None:
+            model.status = status
+            await self._session.flush()
+
     async def create(
         self,
         *,
@@ -81,9 +91,7 @@ class SessionRepository:
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
-    async def count_scheduled_from(
-        self, today: date, until: date | None = None
-    ) -> int:
+    async def count_scheduled_from(self, today: date, until: date | None = None) -> int:
         """Count scheduled sessions with date >= today (and <= until if given).
 
         Used by pace() to compute lessons remaining before the exam date. When no

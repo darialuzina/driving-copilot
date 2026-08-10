@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Coroutine
 from dataclasses import dataclass
 from datetime import date
-from typing import Any
+from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
 import structlog
@@ -27,6 +28,7 @@ from app.repositories.skill_repository import SkillRepository
 from app.services.agent import AgentService
 from app.services.knowledge import KnowledgeBase
 from app.services.router import LlmClient, RouterService
+from app.services.telegram_format import to_telegram_html
 from app.services.tools import Tool, ToolContext, phase2_tools
 from app.services.web_search import WebSearcher
 
@@ -40,7 +42,9 @@ START_TEXT = (
     '- look up your notes ("what did I write about highways?")\n'
     '- analyse your progress ("what are my weak areas?", "am I on track?")\n'
     '- answer CBR exam questions ("what do they check on bijzondere verrichtingen?")\n'
-    '- log what you practiced ("today we did parking, went ok")\n\n'
+    '- log what you practiced ("today we did parking, went ok")\n'
+    '- record or cancel a booked lesson ("i have a lesson tuesday 15:00 with marco", '
+    '"cancel my friday lesson")\n\n'
     "Just write to me in Russian or English."
 )
 
@@ -117,7 +121,7 @@ async def _start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not is_allowed_chat(chat_id, settings):
         return
     if update.effective_chat is not None:
-        await update.effective_chat.send_message(START_TEXT)
+        await send_reply(update.effective_chat, START_TEXT)
 
 
 async def _on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -136,7 +140,22 @@ async def _on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         reply = "Sorry, I couldn't process that right now. Please try again in a moment."
     log.info("bot.reply", text=reply)
     if update.effective_chat is not None:
-        await update.effective_chat.send_message(reply)
+        await send_reply(update.effective_chat, reply)
+
+
+class _Chat(Protocol):
+    def send_message(
+        self, text: str, parse_mode: str | None = ...
+    ) -> Coroutine[Any, Any, object]: ...
+
+
+async def send_reply(chat: _Chat, text: str) -> None:
+    """Send a reply to Daria as Telegram HTML.
+
+    Strips residual markdown, escapes stray markup, and keeps the model's <b>/<i>
+    emphasis tags so bold/italic render. parse_mode=HTML is set on every send.
+    """
+    await chat.send_message(to_telegram_html(text), parse_mode="HTML")
 
 
 def is_allowed_chat(chat_id: int | None, settings: Settings) -> bool:

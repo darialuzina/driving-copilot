@@ -35,6 +35,15 @@ router:
     expect: other
   - message: "book me a lesson tomorrow"
     expect: other
+  # --- DRIVE-5: manual lesson management routes to `log` (the only write-allowing label) ---
+  - message: "i have a lesson next tuesday 15:00 with marco"   # record a booking
+    expect: log
+  - message: "у меня урок в следующий вторник в 15:00 с marco"
+    expect: log
+  - message: "cancel my lesson on friday"                      # cancel a recorded booking
+    expect: log
+  - message: "отмени мой урок в пятницу"
+    expect: log
 
 end_to_end:
   - name: weak_areas_names_evidence_only
@@ -86,3 +95,24 @@ end_to_end:
     must_contain:
       - "not from the CBR docs"
     must_not_contain: []
+  # --- DRIVE-5: manual lesson management + usability fixes ---
+  - name: add_lesson_visible_in_next_lessons
+    message: "I have a lesson on 2026-08-20 at 15:00 with Marco"
+    fixture: empty_db
+    route: log
+    must_contain:
+      - "2026-08-20"
+      - "Marco"
+    must_not_contain: []
+  - name: pace_no_exam_date_verdict
+    message: "am I on track?"
+    fixture: backfill
+    route: analytics
+    must_contain:
+      - "no exam date"
+    must_not_contain:
+      - "off track"
+      - "Let me know"
+      - "Would you like"
+      - "Should I"
+      - "Want me to"

@@ -29,11 +29,19 @@ class SkillStatus(StrEnum):
 
 @dataclass(frozen=True)
 class PaceResult:
-    """Output of pace(): lessons remaining vs skills not yet solid (spec section 3)."""
+    """Output of pace(): lessons remaining vs skills not yet solid (spec section 3).
+
+    `verdict` is the human-facing verdict:
+    - `no_exam_date`: no exam date is set, so on_track is undefined (`on_track` is None);
+      the counts are still returned so the answer can say "X lessons scheduled, Y gaps".
+    - `on_track`: exam date set and lessons_left >= weak_or_missing_count.
+    - `off_track`: exam date set and lessons_left < weak_or_missing_count.
+    """
 
     lessons_left: int
     weak_or_missing_count: int
-    on_track: bool
+    on_track: bool | None
+    verdict: str
 
 
 def skill_status(assessments: list[str]) -> SkillStatus:
@@ -53,16 +61,33 @@ def skill_status(assessments: list[str]) -> SkillStatus:
     return SkillStatus.IN_PROGRESS
 
 
-def pace(*, lessons_left: int, solid_count: int, total_exam_relevant: int) -> PaceResult:
-    """on_track = lessons_left >= weak_or_missing_count.
+def pace(
+    *,
+    lessons_left: int,
+    solid_count: int,
+    total_exam_relevant: int,
+    exam_date: date | None,
+) -> PaceResult:
+    """Pace verdict (spec section 3, DRIVE-5).
 
     weak_or_missing_count = total exam-relevant skills minus the solid ones.
+    With no exam date, on_track is undefined: return verdict `no_exam_date`
+    (never `on_track=False`), with the counts so the answer can still report them.
     """
     weak_or_missing = max(0, total_exam_relevant - solid_count)
+    if exam_date is None:
+        return PaceResult(
+            lessons_left=lessons_left,
+            weak_or_missing_count=weak_or_missing,
+            on_track=None,
+            verdict="no_exam_date",
+        )
+    on_track = lessons_left >= weak_or_missing
     return PaceResult(
         lessons_left=lessons_left,
         weak_or_missing_count=weak_or_missing,
-        on_track=lessons_left >= weak_or_missing,
+        on_track=on_track,
+        verdict="on_track" if on_track else "off_track",
     )
 
 

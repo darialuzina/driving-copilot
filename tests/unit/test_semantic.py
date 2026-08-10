@@ -46,31 +46,55 @@ def test_skill_status_chronological_order_matters() -> None:
     assert skill_status(["needs_attention", "good", "good"]) is SkillStatus.SOLID
 
 
-# --- pace (spec section 3) ---
+# --- pace (spec section 3, DRIVE-5 verdict) ---
 
 
 def test_pace_on_track_when_lessons_meet_or_exceed_gaps() -> None:
-    result = pace(lessons_left=5, solid_count=3, total_exam_relevant=8)
+    result = pace(lessons_left=5, solid_count=3, total_exam_relevant=8, exam_date=date(2026, 12, 1))
     assert result == PaceResult(
-        lessons_left=5, weak_or_missing_count=5, on_track=True
+        lessons_left=5,
+        weak_or_missing_count=5,
+        on_track=True,
+        verdict="on_track",
     )
 
 
 def test_pace_off_track_when_not_enough_lessons() -> None:
-    result = pace(lessons_left=2, solid_count=3, total_exam_relevant=8)
+    result = pace(lessons_left=2, solid_count=3, total_exam_relevant=8, exam_date=date(2026, 12, 1))
     assert result.weak_or_missing_count == 5
     assert result.on_track is False
+    assert result.verdict == "off_track"
 
 
 def test_pace_all_solid_is_on_track() -> None:
-    result = pace(lessons_left=0, solid_count=8, total_exam_relevant=8)
+    result = pace(lessons_left=0, solid_count=8, total_exam_relevant=8, exam_date=date(2026, 12, 1))
     assert result.weak_or_missing_count == 0
     assert result.on_track is True
+    assert result.verdict == "on_track"
 
 
 def test_pace_solid_count_never_negative() -> None:
-    result = pace(lessons_left=3, solid_count=10, total_exam_relevant=8)
+    result = pace(
+        lessons_left=3, solid_count=10, total_exam_relevant=8, exam_date=date(2026, 12, 1)
+    )
     assert result.weak_or_missing_count == 0
+
+
+def test_pace_no_exam_date_returns_no_exam_date_verdict_with_counts() -> None:
+    result = pace(lessons_left=2, solid_count=3, total_exam_relevant=8, exam_date=None)
+    assert result.weak_or_missing_count == 5
+    assert result.lessons_left == 2
+    assert result.on_track is None
+    assert result.verdict == "no_exam_date"
+
+
+def test_pace_no_exam_date_with_no_lessons_is_never_off_track() -> None:
+    # DRIVE-5: with EXAM_DATE unset, never return on_track=False; the verdict is
+    # no_exam_date and on_track is None even when there are zero lessons and many gaps.
+    result = pace(lessons_left=0, solid_count=0, total_exam_relevant=8, exam_date=None)
+    assert result.on_track is None
+    assert result.verdict == "no_exam_date"
+    assert result.weak_or_missing_count == 8
 
 
 # --- is_stale (spec section 3) ---
