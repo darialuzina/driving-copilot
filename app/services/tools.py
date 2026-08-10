@@ -241,13 +241,32 @@ class LogLessonTool:
         except ValidationError as exc:
             raise ToolValidationError(self.name, str(exc)) from exc
 
+        today = ctx.today()
+        lesson_date = today if params.date == "today" else date.fromisoformat(params.date)
+        # log_lesson records a past or today lesson. Future dates are rejected (the
+        # model must not log something that hasn't happened) and dates older than 30
+        # days are rejected (too stale to be a reliable record). Fail loudly with the
+        # current date so the model can correct or ask Daria to resend.
+        if lesson_date > today:
+            raise ToolValidationError(
+                self.name,
+                f"date {lesson_date.isoformat()} is in the future; today is "
+                f"{today.isoformat()}. log_lesson records a past or today lesson — "
+                f"pass a date <= today.",
+            )
+        if (today - lesson_date).days > 30:
+            raise ToolValidationError(
+                self.name,
+                f"date {lesson_date.isoformat()} is more than 30 days ago; today is "
+                f"{today.isoformat()}. log_lesson only accepts dates within the last "
+                f"30 days.",
+            )
+
         # Idempotency: if this exact key was processed before, return the stored result.
         if idempotency_key is not None:
             prior = await ctx.audit.get_by_idempotency_key(idempotency_key)
             if prior is not None:
                 return dict(prior.payload)  # type: ignore[arg-type]
-
-        lesson_date = ctx.today() if params.date == "today" else date.fromisoformat(params.date)
 
         # Find or create a session for this date. Prefer an existing session (e.g. an email
         # booking); if none, create a manual completed session.
@@ -382,11 +401,12 @@ class CancelLessonParams(ToolParams):
 class AddLessonTool:
     name = "add_lesson"
     description = (
-        "Record a driving lesson Daria has booked (e.g. in the On My Way app) so it is "
-        "tracked here. Auto-approved write. Pass the date (ISO YYYY-MM-DD), start_time "
-        "(HH:MM), optional end_time (HH:MM) and instructor. Idempotent: re-adding the "
-        "same lesson returns the existing scheduled session without creating a duplicate. "
-        "This only records a booking Daria already made — it cannot book via the On My Way app."
+        "Record a driving lesson Daria has booked (e.g. in your driving school's booking "
+        "app) so it is tracked here. Auto-approved write. Pass the date (ISO YYYY-MM-DD, "
+        "today or future only), start_time (HH:MM), optional end_time (HH:MM) and "
+        "instructor. Idempotent: re-adding the same lesson returns the existing scheduled "
+        "session without creating a duplicate. This only records a booking Daria already "
+        "made — it cannot book via the booking app."
     )
     tier = RiskTier.WRITE_AUTO
 
@@ -408,12 +428,22 @@ class AddLessonTool:
         except ValidationError as exc:
             raise ToolValidationError(self.name, str(exc)) from exc
 
+        today = ctx.today()
+        lesson_date = date.fromisoformat(params.date)
+        # add_lesson records a scheduled (today or future) lesson. A past date is a
+        # sign the model guessed the year or mishandled a relative date; reject it
+        # loudly with the current date so the model corrects or asks Daria to resend.
+        if lesson_date < today:
+            raise ToolValidationError(
+                self.name,
+                f"date {params.date} is in the past; today is {today.isoformat()}. "
+                f"add_lesson records a scheduled lesson — pass a date >= today.",
+            )
+
         if idempotency_key is not None:
             prior = await ctx.audit.get_by_idempotency_key(idempotency_key)
             if prior is not None:
                 return dict(prior.payload)  # type: ignore[arg-type]
-
-        lesson_date = date.fromisoformat(params.date)
 
         # Idempotency across days too: if a scheduled session already exists on this
         # date at this start_time, return it instead of creating a duplicate.
@@ -459,7 +489,7 @@ class CancelLessonTool:
         "either the session_id, or the date (ISO YYYY-MM-DD) to cancel scheduled "
         "lessons on that date. Idempotent: cancelling an already-cancelled or missing "
         "lesson is a no-op that reports the current state. This only cancels the record "
-        "here — it cannot cancel a booking in the On My Way app."
+        "here — it cannot cancel a booking in the booking app."
     )
     tier = RiskTier.WRITE_AUTO
 

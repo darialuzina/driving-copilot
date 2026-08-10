@@ -44,6 +44,15 @@ router:
     expect: log
   - message: "отмени мой урок в пятницу"
     expect: log
+  # --- DRIVE-5b: relative-date expressions route to `log` (record/log a lesson) ---
+  - message: "урок во вторник 18 августа в 15:00 с Marco"      # bug case (a): weekday+day+month, no year
+    expect: log
+  - message: "i had lesson yestrday"                           # bug case (b): relative past, typo
+    expect: log
+  - message: "next friday i have a lesson with marco"          # relative future weekday
+    expect: log
+  - message: "урок в следующую пятницу в 14:00"
+    expect: log
 
 end_to_end:
   - name: weak_areas_names_evidence_only
@@ -116,3 +125,38 @@ end_to_end:
       - "Would you like"
       - "Should I"
       - "Want me to"
+  # --- DRIVE-5b: relative-date resolution + tool date validation ---
+  # These cases assume the eval runner freezes the clock at 2026-08-10 (Monday),
+  # so "tuesday 18 august" resolves to the future date 2026-08-18 (a Tuesday).
+  - name: relative_date_tuesday_resolves_to_future
+    message: "урок во вторник 18 августа в 15:00 с Marco"
+    fixture: empty_db
+    route: log
+    must_contain:
+      - "2026-08-18"
+      - "Marco"
+    must_not_contain:
+      - "2025"            # must not guess the wrong year
+  - name: add_lesson_past_date_rejected
+    message: "book me a lesson on 2020-01-01 at 15:00"
+    fixture: empty_db
+    route: log
+    must_contain:
+      - "past"
+    must_not_contain: []
+  - name: log_lesson_future_date_rejected
+    message: "i had a lesson on 2099-12-31, parking went great"
+    fixture: empty_db
+    route: log
+    must_contain:
+      - "future"
+    must_not_contain: []
+  - name: clarification_asks_to_resend_full_request
+    message: "book me a lesson"
+    fixture: empty_db
+    route: log
+    must_contain:
+      - "one message"
+    must_not_contain:
+      - "which date"
+      - "what time"

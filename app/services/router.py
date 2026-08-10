@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from datetime import date, datetime
 from pathlib import Path
 from typing import Protocol, cast
+from zoneinfo import ZoneInfo
 
 import structlog
 from openai import AsyncOpenAI
@@ -20,7 +22,7 @@ from app.services.llm_types import (
     to_token_usage,
     usage_log_kwargs,
 )
-from app.services.prompts import ROUTER_SYSTEM_PROMPT
+from app.services.prompts import router_system_prompt
 
 log = structlog.get_logger()
 
@@ -104,6 +106,13 @@ class RouterService:
         self._client = client
         self._settings = settings
         self._log_path = settings.router_log_path
+        self._tz = ZoneInfo(settings.timezone)
+
+    def today(self) -> date:
+        """Current date in the configured timezone, recomputed per call (never cached
+        at process start) so relative-date expressions resolve against the real today.
+        """
+        return datetime.now(self._tz).date()
 
     async def classify(self, message: str) -> str:
         started = time.monotonic()
@@ -124,7 +133,7 @@ class RouterService:
         try:
             result = await self._client.chat(
                 model=model,
-                system=ROUTER_SYSTEM_PROMPT,
+                system=router_system_prompt(self.today()),
                 user=message,
                 json_mode=True,
             )

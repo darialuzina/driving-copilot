@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -134,3 +134,44 @@ async def test_log_lesson_distinct_calls_distinct_keys(
     )
     notes = (await session.execute(select(LessonNoteModel))).scalars().all()
     assert len(notes) == 2
+
+
+# --- DRIVE-5b: date validation (code, fail loudly) ---
+
+
+async def test_log_lesson_rejects_future_date(ctx: ToolContext) -> None:
+    from app.domain.errors import ToolValidationError
+
+    future = (ctx.today() + timedelta(days=1)).isoformat()
+    with pytest.raises(ToolValidationError) as exc_info:
+        await LogLessonTool().run(
+            {"date": future, "skills": [{"skill": "parking", "assessment": "good", "note": "x"}]},
+            ctx,
+            idempotency_key=None,
+        )
+    assert "future" in exc_info.value.reason
+    assert ctx.today().isoformat() in exc_info.value.reason
+
+
+async def test_log_lesson_rejects_date_older_than_30_days(ctx: ToolContext) -> None:
+    from app.domain.errors import ToolValidationError
+
+    old = (ctx.today() - timedelta(days=31)).isoformat()
+    with pytest.raises(ToolValidationError) as exc_info:
+        await LogLessonTool().run(
+            {"date": old, "skills": [{"skill": "parking", "assessment": "good", "note": "x"}]},
+            ctx,
+            idempotency_key=None,
+        )
+    assert "30 days" in exc_info.value.reason
+    assert ctx.today().isoformat() in exc_info.value.reason
+
+
+async def test_log_lesson_accepts_date_within_30_days(ctx: ToolContext) -> None:
+    recent = (ctx.today() - timedelta(days=10)).isoformat()
+    result = await LogLessonTool().run(
+        {"date": recent, "skills": [{"skill": "parking", "assessment": "good", "note": "x"}]},
+        ctx,
+        idempotency_key="log:recent",
+    )
+    assert result["date"] == recent

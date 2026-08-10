@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import time
+from datetime import date
 from typing import Any, TypedDict, cast
 
 import structlog
@@ -17,8 +18,8 @@ from app.services.llm_types import (
     usage_log_kwargs,
 )
 from app.services.prompts import (
-    ANSWER_SYSTEM_PROMPT,
-    REFUSAL_SYSTEM_PROMPT,
+    answer_system_prompt,
+    refusal_system_prompt,
 )
 from app.services.router import LlmClient
 from app.services.tools import Tool, ToolContext, dump_tool_result, tool_by_name, tools_for_label
@@ -65,15 +66,15 @@ class AgentService:
 
     async def handle(self, message: str, label: str, tools: list[Tool], ctx: ToolContext) -> str:
         if label in ("smalltalk", "other"):
-            return await self._freeform(message, refusal=(label == "other"))
+            return await self._freeform(message, ctx.today(), refusal=(label == "other"))
         # log + lookup + analytics + docs -> typed tool-calling agent loop.
         # The router's coarse job is path safety: docs get no write tools and no DB
         # read tools (only the docs stack). See tools_for_label.
         subset = tools_for_label(label, tools)
         return await self._agent_loop(message, subset, ctx, label)
 
-    async def _freeform(self, message: str, *, refusal: bool) -> str:
-        system = REFUSAL_SYSTEM_PROMPT if refusal else ANSWER_SYSTEM_PROMPT
+    async def _freeform(self, message: str, today: date, *, refusal: bool) -> str:
+        system = refusal_system_prompt(today) if refusal else answer_system_prompt(today)
         started = time.monotonic()
         try:
             result = await self._client.chat(
@@ -95,6 +96,7 @@ class AgentService:
         self, message: str, tools: list[Tool], ctx: ToolContext, label: str
     ) -> str:
         tool_schemas = [t.openai_schema() for t in tools]
+        system_prompt = answer_system_prompt(ctx.today())
         messages: list[dict[str, object]] = [{"role": "user", "content": message}]
         tool_results_json: list[str] = []
         total_tokens = 0
@@ -105,7 +107,7 @@ class AgentService:
             try:
                 completion = await self._client.chat_with_tools(
                     model=self._settings.answer_model,
-                    system=ANSWER_SYSTEM_PROMPT,
+                    system=system_prompt,
                     messages=messages,
                     tools=tool_schemas,
                 )
@@ -145,7 +147,7 @@ class AgentService:
                             "content": _corrective_note(failures),
                         }
                     )
-                    retry_usage = await self._retry(messages, tool_schemas)
+                    retry_usage = await self._retry(messages, tool_schemas, system_prompt)
                     total_tokens += retry_usage[0]
                     total_latency_ms += retry_usage[1]
                     answer = retry_usage[2]
@@ -180,13 +182,14 @@ class AgentService:
         self,
         messages: list[dict[str, object]],
         tool_schemas: list[dict[str, object]],
+        system_prompt: str,
     ) -> tuple[int, int, str]:
         """One corrective retry after a guardrail failure. Returns (tokens, latency, answer)."""
         started = time.monotonic()
         try:
             retry_completion = await self._client.chat_with_tools(
                 model=self._settings.answer_model,
-                system=ANSWER_SYSTEM_PROMPT,
+                system=system_prompt,
                 messages=messages,
                 tools=tool_schemas,
             )
