@@ -27,6 +27,11 @@ log = structlog.get_logger()
 
 _MAX_TOOL_TURNS = 5
 _DATE_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
+# Provenance markers for docs-path answers (spec rule #5). A docs answer must carry
+# exactly one of these so Daria can tell where a knowledge claim came from.
+_KB_CITATION_RE = re.compile(r"Rijprocedure\s+B\s*,\s*§", re.IGNORECASE)
+_LIVE_PROVENANCE_MARKER = "from cbr.nl just now"
+_GK_PROVENANCE_MARKER = "not from the CBR docs — general knowledge"
 # Integers not already part of an ISO date.
 _NUMBER_RE = re.compile(r"(?<!\d)(\d{1,4})(?!\d)")
 # A number presented as an id reference: "note 5", "session #3", "id 12".
@@ -65,7 +70,7 @@ class AgentService:
         # The router's coarse job is path safety: docs get no write tools and no DB
         # read tools (only the docs stack). See tools_for_label.
         subset = tools_for_label(label, tools)
-        return await self._agent_loop(message, subset, ctx)
+        return await self._agent_loop(message, subset, ctx, label)
 
     async def _freeform(self, message: str, *, refusal: bool) -> str:
         system = REFUSAL_SYSTEM_PROMPT if refusal else ANSWER_SYSTEM_PROMPT
@@ -86,7 +91,9 @@ class AgentService:
         )
         return result.content
 
-    async def _agent_loop(self, message: str, tools: list[Tool], ctx: ToolContext) -> str:
+    async def _agent_loop(
+        self, message: str, tools: list[Tool], ctx: ToolContext, label: str
+    ) -> str:
         tool_schemas = [t.openai_schema() for t in tools]
         messages: list[dict[str, object]] = [{"role": "user", "content": message}]
         tool_results_json: list[str] = []
@@ -128,24 +135,21 @@ class AgentService:
 
             if not tool_calls:
                 answer = _content(msg)
-                checked = containment_ok(answer, tool_results_json)
-                if not checked and tool_results_json:
+                failures = _guardrail_failures(answer, tool_results_json, label)
+                if failures:
                     # One corrective retry, then send visibly degraded.
                     messages.append(_assistant_to_history(msg))
                     messages.append(
                         {
                             "role": "system",
-                            "content": (
-                                "Corrective note: only use dates, counts, and ids that appear "
-                                "verbatim in the tool results. Reply again."
-                            ),
+                            "content": _corrective_note(failures),
                         }
                     )
                     retry_usage = await self._retry(messages, tool_schemas)
                     total_tokens += retry_usage[0]
                     total_latency_ms += retry_usage[1]
                     answer = retry_usage[2]
-                    if not containment_ok(answer, tool_results_json):
+                    if _guardrail_failures(answer, tool_results_json, label):
                         answer = f"\u26a0\ufe0f {answer}"
                 log.info(
                     "agent.answer",
@@ -287,6 +291,55 @@ def make_write_idempotency_key(
     )
     digest = hashlib.sha256(f"{tool_name}|{canonical}|{today_iso}".encode())
     return f"{tool_name}:{digest.hexdigest()[:16]}"
+
+
+def provenance_ok(answer: str) -> bool:
+    """A docs-path answer must carry exactly one of the three provenance markers
+    required by rule #5: a 'Rijprocedure B, §…' KB citation, the live-web marker
+    ('from cbr.nl just now'), or the general-knowledge prefix. Zero markers (an
+    unsourced claim) or more than one (contradictory sourcing) both fail.
+    """
+    count = 0
+    if _KB_CITATION_RE.search(answer):
+        count += 1
+    if _LIVE_PROVENANCE_MARKER in answer:
+        count += 1
+    if _GK_PROVENANCE_MARKER in answer:
+        count += 1
+    return count == 1
+
+
+def _guardrail_failures(
+    answer: str, tool_results_json: list[str], label: str
+) -> list[str]:
+    """Which guardrail rules the answer violates. Empty means ok.
+
+    Containment (dates/counts/ids) only applies when tool results exist; the
+    provenance marker check applies only to docs-path answers.
+    """
+    failures: list[str] = []
+    if tool_results_json and not containment_ok(answer, tool_results_json):
+        failures.append("containment")
+    if label == "docs" and not provenance_ok(answer):
+        failures.append("provenance")
+    return failures
+
+
+def _corrective_note(failures: list[str]) -> str:
+    parts: list[str] = []
+    if "containment" in failures:
+        parts.append(
+            "only use dates, counts, and ids that appear verbatim in the tool results"
+        )
+    if "provenance" in failures:
+        parts.append(
+            "prefix this knowledge answer with exactly one provenance marker: "
+            "a 'Rijprocedure B, §…' citation (from the knowledge base), "
+            "'from cbr.nl just now:' (from the live web fallback), or "
+            "'not from the CBR docs — general knowledge, verify in your theory book:' "
+            "(your own general knowledge)"
+        )
+    return "Corrective note: " + "; ".join(parts) + ". Reply again."
 
 
 def containment_ok(answer: str, tool_results_json: list[str]) -> bool:
