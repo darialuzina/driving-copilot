@@ -97,6 +97,10 @@ echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.
 sudo apt-get update
 sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
+# `make` is used by `make deploy-check` (Makefile) and is NOT in the Debian 12
+# minimal base image — install it explicitly.
+sudo apt-get install -y make
+
 # Add your user to the docker group so you don't need sudo for every command:
 sudo usermod -aG docker $USER
 newgrp docker
@@ -355,7 +359,7 @@ docker compose logs --tail=200 bot
 # Only warnings and above (structlog level field):
 docker compose logs bot | grep -iE 'warning|error'
 
-# The router eval log (jsonl, also mounted on the host at ./logs/):
+# The router eval log (jsonl, in the botlogs named volume):
 docker compose exec bot tail -f /app/logs/router.jsonl
 ```
 

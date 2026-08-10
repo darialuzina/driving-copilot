@@ -168,6 +168,9 @@ class RouterService:
         await self._append_jsonl(record)
 
     async def _append_jsonl(self, record: dict[str, object]) -> None:
+        # Observability failures must degrade silently, never crash a request
+        # (ai.md "observability failures" rule). The router eval log is valuable
+        # but optional; an unwritable logs dir is a warning, not a 500.
         path: Path = self._log_path
         line = json.dumps(record, ensure_ascii=False) + "\n"
 
@@ -176,7 +179,10 @@ class RouterService:
             with path.open("a", encoding="utf-8") as fh:
                 fh.write(line)
 
-        await asyncio.to_thread(_write)
+        try:
+            await asyncio.to_thread(_write)
+        except OSError as exc:
+            log.warning("router.telemetry_write_failed", path=str(path), error=str(exc))
 
 
 def extract_label(raw: str) -> str:

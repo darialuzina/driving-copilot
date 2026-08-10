@@ -38,8 +38,10 @@ services:
       # Same TZ as the db so the scheduler and digests are on Amsterdam time.
       TZ: Europe/Amsterdam
     volumes:
-      # Router eval log (jsonl) — useful to inspect on the host; not a secret.
-      - ./logs:/app/logs
+      # Router eval log (jsonl) — eval data that must survive image rebuilds.
+      # A named volume (not a bind mount) keeps router.jsonl across `up -d --build`
+      # without depending on the host's ./logs dir.
+      - botlogs:/app/logs
 
   backup:
     # Nightly pg_dump at 03:00 Amsterdam time to a named volume; keeps the last 7.
@@ -60,3 +62,4 @@ services:
 volumes:
   pgdata:
   backups:
+  botlogs:

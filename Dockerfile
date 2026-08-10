@@ -57,8 +57,9 @@ RUN apt-get update && \
 COPY --from=build --chown=app:app /app /app
 
 # The bot writes its router eval log to logs/router.jsonl (see app/config.py).
-# Create it so the image works standalone (compose also bind-mounts ./logs here).
-RUN mkdir -p /app/logs
+# Create it owned by the app user so the non-root process can append to it;
+# compose mounts a named volume here so eval data survives image rebuilds.
+RUN mkdir -p /app/logs && chown -R app:app /app/logs
 
 USER app
 
@@ -68,4 +69,5 @@ COPY --chown=app:app docker/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/app/entrypoint.sh"]
-CMD ["bot"]
+# No CMD: the entrypoint defaults to "migrate + start bot" when no args are
+# given, and execs any args directly (compose run bot <cmd>).

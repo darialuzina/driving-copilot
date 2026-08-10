@@ -79,3 +79,31 @@ async def test_classify_router_api_error_raises(tmp_path: Path) -> None:
 
     with pytest.raises(RouterUnavailableError):
         await RouterService(BoomClient(), _settings(tmp_path)).classify("hi")
+
+
+async def test_telemetry_write_failure_does_not_crash_request(tmp_path: Path) -> None:
+    # Regression: an unwritable logs dir must produce a warning, never raise.
+    # The router jsonl is eval data — losing a line is preferable to dropping
+    # the user's message (ai.md "observability failures degrade silently").
+    from structlog.testing import capture_logs
+
+    log_path = tmp_path / "readonly" / "router.jsonl"
+    # Pre-create the parent dir read-only so the open("a") write fails.
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.parent.chmod(0o500)
+    try:
+        client = FakeLlmClient(chat_responses=['{"label": "smalltalk"}'])
+        service = RouterService(
+            client, Settings(router_model="r", answer_model="a", router_log_path=log_path)
+        )
+        with capture_logs() as logs:
+            label = await service.classify("hi!")
+        # The message still answered.
+        assert label == "smalltalk"
+        # A telemetry warning was emitted, not an exception raised.
+        warnings = [e for e in logs if e["event"] == "router.telemetry_write_failed"]
+        assert len(warnings) == 1
+        assert str(log_path) == warnings[0]["path"]
+    finally:
+        # Restore perms so tmp_path cleanup works.
+        log_path.parent.chmod(0o700)
