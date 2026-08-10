@@ -38,7 +38,9 @@ def _client_with(completion: object) -> OpenRouterLlmClient:
 
 async def test_chat_returns_empty_when_no_choices() -> None:
     client = _client_with(_Choices(choices=[]))
-    assert await client.chat("m", "s", "u", json_mode=True) == ""
+    result = await client.chat("m", "s", "u", json_mode=True)
+    assert result.content == ""
+    assert result.usage is None
 
 
 async def test_chat_with_tools_returns_completion_with_no_choices() -> None:
@@ -71,4 +73,5 @@ async def test_chat_returns_content(label: str) -> None:
         choices: list[_Ch]
 
     client = _client_with(_C(choices=[_Ch(message=_Msg(content=label))]))
-    assert await client.chat("m", "s", "u") == label
+    result = await client.chat("m", "s", "u")
+    assert result.content == label

@@ -34,9 +34,9 @@ START_TEXT = (
     "I can:\n"
     '- look up your upcoming and past lessons ("when is my next lesson?", '
     '"what did we do last time?")\n'
-    '- log what you practiced ("today we did parking, went ok")\n'
-    "- (from Phase 2 on) gap analysis and CBR exam info\n\n"
-    "Just write to me in any language you like."
+    '- look up your notes ("what did I write about highways?")\n'
+    '- log what you practiced ("today we did parking, went ok")\n\n'
+    "Just write to me in Russian or English."
 )
 
 

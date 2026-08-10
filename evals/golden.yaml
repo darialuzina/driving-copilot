@@ -1,0 +1,62 @@
+# Driving Copilot — golden eval set.
+# Router cases from spec §10 (v1.7) plus end-to-end assertions.
+# The runner (3 rolls per question, router accuracy table) is Phase 5; this file
+# lives in the repo from Phase 1 per ai.md and grows from real traffic.
+#
+# Schema:
+#   router:        message -> expected single label
+#   end_to_end:    message + fixture + must_contain / must_not_contain assertions
+#   backfill:      run against the section 11 backfill fixture
+
+version: 1
+
+router:
+  - message: "when is my next lesson?"
+    expect: lookup
+  - message: "когда у меня следующий урок?"
+    expect: lookup
+  - message: "how is my parking?"
+    expect: analytics
+  - message: "how did my rotondes go?"           # Dutch term embedded in English
+    expect: analytics
+  - message: "today we practiced merging, went fine"
+    expect: log
+  - message: "сегодня делали bijzondere verrichtingen, нормально"  # Dutch term embedded in Russian
+    expect: log
+  - message: "what do they check in the exam?"
+    expect: docs
+  - message: "hi!"
+    expect: smalltalk
+  - message: "what tires should I buy?"
+    expect: other
+  - message: "book me a lesson tomorrow"
+    expect: other
+
+end_to_end:
+  - name: weak_areas_names_evidence_only
+    message: "what are my weak areas?"
+    fixture: backfill
+    must_contain:
+      - "roundabouts"
+      - "speed adaptation"
+    must_not_contain:
+      - "parking"          # no evidence for parking in the backfill
+  - name: next_lesson_empty_db_honest
+    message: "when is my next lesson?"
+    fixture: empty_db
+    must_contain:
+      - "no"
+    must_not_contain:
+      - "2026"            # must not invent a date
+  - name: clutch_improvement_with_dates
+    message: "how is my clutch?"
+    fixture: backfill
+    must_contain:
+      - "2026-08-06"      # latest = good, cite the date
+    must_not_contain: []
+  - name: instructor_is_desevio
+    message: "who is my instructor?"
+    fixture: backfill
+    must_contain:
+      - "Desevio"
+    must_not_contain: []
