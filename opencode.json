@@ -9,10 +9,59 @@
         "apiKey": "{env:OPENROUTER_API_KEY}"
       },
       "models": {
-        "z-ai/glm-5.2": { "name": "GLM 5.2", "limit": { "context": 1000000, "output": 16384 }, "options": { "provider": { "sort": "throughput" } } },
-        "deepseek/deepseek-v4-pro": { "name": "DeepSeek V4 Pro", "limit": { "context": 1000000, "output": 16384 }, "options": { "provider": { "order": ["baidu", "together", "deepinfra"], "allow_fallbacks": true } } },
-        "moonshotai/kimi-k2.7-code": { "name": "Kimi K2.7 Code", "limit": { "context": 256000, "output": 16384 }, "options": { "provider": { "sort": "throughput" } } },
-        "qwen/qwen3-coder": { "name": "Qwen3 Coder", "limit": { "context": 1000000, "output": 16384 }, "options": { "provider": { "sort": "throughput" } } }
+        "z-ai/glm-5.2": {
+          "name": "GLM 5.2",
+          "limit": {
+            "context": 1000000,
+            "output": 16384
+          },
+          "options": {
+            "provider": {
+              "sort": "throughput"
+            }
+          }
+        },
+        "deepseek/deepseek-v4-pro": {
+          "name": "DeepSeek V4 Pro",
+          "limit": {
+            "context": 1000000,
+            "output": 16384
+          },
+          "options": {
+            "provider": {
+              "order": [
+                "baidu",
+                "together",
+                "deepinfra"
+              ],
+              "allow_fallbacks": true
+            }
+          }
+        },
+        "moonshotai/kimi-k2.7-code": {
+          "name": "Kimi K2.7 Code",
+          "limit": {
+            "context": 256000,
+            "output": 8192
+          },
+          "options": {
+            "provider": {
+              "sort": "throughput"
+            }
+          }
+        },
+        "qwen/qwen3-coder": {
+          "name": "Qwen3 Coder",
+          "limit": {
+            "context": 1000000,
+            "output": 16384
+          },
+          "options": {
+            "provider": {
+              "sort": "throughput"
+            }
+          }
+        }
       }
     }
   },
