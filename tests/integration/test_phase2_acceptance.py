@@ -78,7 +78,9 @@ async def test_gap_analysis_matches_backfill_derived_picture(
     # Spec section 11: weak = roundabouts (2x), speed adaptation (2x),
     # mirror routine, anticipating other road users.
     expected_weak = {
-        "roundabouts", "speed adaptation", "mirror routine",
+        "roundabouts",
+        "speed adaptation",
+        "mirror routine",
         "anticipating other road users",
     }
     assert expected_weak <= weak
@@ -101,9 +103,11 @@ async def test_gap_analysis_weak_ranked_by_exam_weight(
     # so ids must be ascending.
     weak_ids = [s["id"] for s in result["weak"]]
     assert weak_ids == sorted(weak_ids)
-    # No scheduled lessons and no solid skills -> not on track, and every exam-relevant
-    # skill counts as weak-or-missing.
-    assert result["pace"]["on_track"] is False
+    # No scheduled lessons and no solid skills, and no exam date set (backfill has none)
+    # -> DRIVE-5: verdict is no_exam_date, on_track is None (never False), and every
+    # exam-relevant skill counts as weak-or-missing.
+    assert result["pace"]["verdict"] == "no_exam_date"
+    assert result["pace"]["on_track"] is None
     assert result["pace"]["weak_or_missing_count"] >= len(result["weak"])
 
 
@@ -153,9 +157,7 @@ async def test_get_notes_unmatched_skill_returns_empty(session: AsyncSession) ->
     ctx = _ctx(session)
     from app.services.tools import GetNotesTool
 
-    result = await GetNotesTool().run(
-        {"skill": "quantum drifting"}, ctx, idempotency_key=None
-    )
+    result = await GetNotesTool().run({"skill": "quantum drifting"}, ctx, idempotency_key=None)
     assert result["count"] == 0
     assert result["unmatched_skill"] == "quantum drifting"
 
@@ -168,7 +170,9 @@ async def test_get_pace_no_exam_date_counts_all_upcoming(
 
     result = await GetPaceTool().run({}, ctx, idempotency_key=None)
     assert result["exam_date"] is None
-    assert result["on_track"] is False  # no lessons, many gaps
+    # DRIVE-5: with no exam date, verdict is no_exam_date and on_track is None (not False).
+    assert result["verdict"] == "no_exam_date"
+    assert result["on_track"] is None
     assert result["weak_or_missing_count"] >= 1
 
 
@@ -274,26 +278,18 @@ async def test_docs_kb_miss_uses_live_fallback_with_label(
         completions=[
             # First turn: cbr_search returns nothing for a KB-miss (fees/cost/price
             # are not in the knowledge base).
-            make_completion(
-                calls=[_tool_call("c1", "cbr_search", {"query": "fees cost price"})]
-            ),
+            make_completion(calls=[_tool_call("c1", "cbr_search", {"query": "fees cost price"})]),
             # Second turn: model falls back to the live web tool.
             make_completion(
                 calls=[_tool_call("c2", "web_search_cbr", {"query": "praktijkexamen kosten"})]
             ),
             # Third turn: model answers with the live-fallback provenance prefix.
             make_completion(
-                content=(
-                    "from cbr.nl just now: the practical exam (personenauto) "
-                    "costs EUR 380."
-                )
+                content=("from cbr.nl just now: the practical exam (personenauto) costs EUR 380.")
             ),
             # Possible guardrail retry (keep the same honest answer).
             make_completion(
-                content=(
-                    "from cbr.nl just now: the practical exam (personenauto) "
-                    "costs EUR 380."
-                )
+                content=("from cbr.nl just now: the practical exam (personenauto) costs EUR 380.")
             ),
         ]
     )
@@ -362,9 +358,7 @@ async def test_docs_flow_exposes_no_write_tool_to_model(
     ctx = _ctx(session)
     client = FakeLlmClient(
         completions=[
-            make_completion(
-                calls=[_tool_call("c1", "cbr_search", {"query": "exam structure"})]
-            ),
+            make_completion(calls=[_tool_call("c1", "cbr_search", {"query": "exam structure"})]),
             make_completion(content="Rijprocedure B, §Toepassing covers the exam parts."),
         ]
     )
@@ -406,12 +400,8 @@ async def test_web_search_unavailable_returns_honest_error_to_model(
     ctx = _ctx(session, web=WebSearcher(""))  # disabled
     client = FakeLlmClient(
         completions=[
-            make_completion(
-                calls=[_tool_call("c1", "cbr_search", {"query": "exam fees"})]
-            ),
-            make_completion(
-                calls=[_tool_call("c2", "web_search_cbr", {"query": "kosten"})]
-            ),
+            make_completion(calls=[_tool_call("c1", "cbr_search", {"query": "exam fees"})]),
+            make_completion(calls=[_tool_call("c2", "web_search_cbr", {"query": "kosten"})]),
             make_completion(
                 content=(
                     "I couldn't find exam fees in the CBR knowledge base and "
@@ -448,15 +438,11 @@ async def test_get_skill_progress_flags_stale_solid_skill(
     notes_repo = LessonNoteRepository(session)
     all_skills = await skills_repo.all()
     target = next(s for s in all_skills if s.name == "parallel parking")
-    s1 = await sessions_repo.create(
-        date=date(2026, 6, 19), status="completed", source="manual"
-    )
+    s1 = await sessions_repo.create(date=date(2026, 6, 19), status="completed", source="manual")
     await notes_repo.create(
         session_id=s1.id, skill_id=target.id, note="clean parking", assessment="good"
     )
-    s2 = await sessions_repo.create(
-        date=date(2026, 7, 6), status="completed", source="manual"
-    )
+    s2 = await sessions_repo.create(date=date(2026, 7, 6), status="completed", source="manual")
     await notes_repo.create(
         session_id=s2.id, skill_id=target.id, note="still clean", assessment="good"
     )
@@ -483,13 +469,9 @@ async def test_analytics_guardrail_degrades_fabricated_date(
         completions=[
             make_completion(calls=[_tool_call("c1", "get_gap_analysis", {})]),
             # First answer invents a date that does not appear in the tool results.
-            make_completion(
-                content="Your weakest area is roundabouts, last seen 2026-12-31."
-            ),
+            make_completion(content="Your weakest area is roundabouts, last seen 2026-12-31."),
             # Retry still invents it -> visibly degraded.
-            make_completion(
-                content="Your weakest area is roundabouts, last seen 2026-12-31."
-            ),
+            make_completion(content="Your weakest area is roundabouts, last seen 2026-12-31."),
         ]
     )
     agent = AgentService(client, settings)
@@ -507,9 +489,7 @@ async def test_docs_answer_without_provenance_marker_is_degraded(
     ctx = _ctx(session)
     client = FakeLlmClient(
         completions=[
-            make_completion(
-                calls=[_tool_call("c1", "cbr_search", {"query": "exam structure"})]
-            ),
+            make_completion(calls=[_tool_call("c1", "cbr_search", {"query": "exam structure"})]),
             # First answer: a knowledge claim with no provenance marker.
             make_completion(content="The exam has several parts and checks various skills."),
             # Retry: still no marker -> visibly degraded.
@@ -531,9 +511,7 @@ async def test_docs_kb_citation_passes_provenance_guardrail(
     ctx = _ctx(session)
     client = FakeLlmClient(
         completions=[
-            make_completion(
-                calls=[_tool_call("c1", "cbr_search", {"query": "stalling fail"})]
-            ),
+            make_completion(calls=[_tool_call("c1", "cbr_search", {"query": "stalling fail"})]),
             make_completion(
                 content="Rijprocedure B, §Toepassing: a single stall is not an automatic fail."
             ),

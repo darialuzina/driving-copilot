@@ -7,7 +7,7 @@ from enum import StrEnum
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from app.db.models import LessonNoteModel, SessionModel, SkillModel
 from app.domain.errors import ToolValidationError
@@ -321,6 +321,242 @@ def phase1_tools() -> list[Tool]:
     return [GetNextLessonsTool(), GetLessonHistoryTool(), LogLessonTool()]
 
 
+# --- DRIVE-5 manual lesson management (write_auto, audit-logged, idempotent) ---
+
+
+def _validate_iso_date(value: str) -> str:
+    try:
+        date.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError("date must be ISO YYYY-MM-DD") from exc
+    return value
+
+
+def _validate_hhmm(value: str) -> str:
+    if len(value) != 5 or value[2] != ":":
+        raise ValueError("time must be HH:MM")
+    hh, mm = value[:2], value[3:]
+    if not (hh.isdigit() and mm.isdigit()) or not (0 <= int(hh) <= 23 and 0 <= int(mm) <= 59):
+        raise ValueError("time must be HH:MM with valid hour/minute")
+    return value
+
+
+class AddLessonParams(ToolParams):
+    date: str = Field(description="Lesson date, ISO YYYY-MM-DD.")
+    start_time: str = Field(description="Lesson start time, HH:MM (24h).")
+    end_time: str | None = Field(default=None, description="Optional end time, HH:MM (24h).")
+    instructor: str | None = Field(default=None, description="Optional instructor name.")
+
+    @field_validator("date")
+    @classmethod
+    def _check_date(cls, value: str) -> str:
+        return _validate_iso_date(value)
+
+    @field_validator("start_time")
+    @classmethod
+    def _check_start(cls, value: str) -> str:
+        return _validate_hhmm(value)
+
+    @field_validator("end_time")
+    @classmethod
+    def _check_end(cls, value: str | None) -> str | None:
+        return _validate_hhmm(value) if value is not None else None
+
+
+class CancelLessonParams(ToolParams):
+    date: str | None = Field(default=None, description="ISO YYYY-MM-DD of the lesson to cancel.")
+    session_id: int | None = Field(default=None, description="Session id of the lesson to cancel.")
+
+    @field_validator("date")
+    @classmethod
+    def _check_date(cls, value: str | None) -> str | None:
+        return _validate_iso_date(value) if value is not None else None
+
+    @model_validator(mode="after")
+    def _exactly_one(self) -> CancelLessonParams:
+        if (self.date is None) == (self.session_id is None):
+            raise ValueError("provide exactly one of date or session_id")
+        return self
+
+
+class AddLessonTool:
+    name = "add_lesson"
+    description = (
+        "Record a driving lesson Daria has booked (e.g. in the On My Way app) so it is "
+        "tracked here. Auto-approved write. Pass the date (ISO YYYY-MM-DD), start_time "
+        "(HH:MM), optional end_time (HH:MM) and instructor. Idempotent: re-adding the "
+        "same lesson returns the existing scheduled session without creating a duplicate. "
+        "This only records a booking Daria already made — it cannot book via the On My Way app."
+    )
+    tier = RiskTier.WRITE_AUTO
+
+    def openai_schema(self) -> dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": AddLessonParams.model_json_schema(),
+            },
+        }
+
+    async def run(
+        self, arguments: dict[str, Any], ctx: ToolContext, idempotency_key: str | None
+    ) -> dict[str, Any]:
+        try:
+            params = AddLessonParams.model_validate(arguments)
+        except ValidationError as exc:
+            raise ToolValidationError(self.name, str(exc)) from exc
+
+        if idempotency_key is not None:
+            prior = await ctx.audit.get_by_idempotency_key(idempotency_key)
+            if prior is not None:
+                return dict(prior.payload)  # type: ignore[arg-type]
+
+        lesson_date = date.fromisoformat(params.date)
+
+        # Idempotency across days too: if a scheduled session already exists on this
+        # date at this start_time, return it instead of creating a duplicate.
+        existing_on_day = await ctx.sessions.get_by_date(lesson_date)
+        for s in existing_on_day:
+            if s.status == "scheduled" and s.start_time == params.start_time:
+                result = _serialize_session(s)
+                result["tool"] = self.name
+                result["created"] = False
+                result["deduplicated"] = True
+                await ctx.audit.create(
+                    action=self.name,
+                    payload=result,
+                    idempotency_key=idempotency_key,
+                )
+                return result
+
+        session_model = await ctx.sessions.create(
+            date=lesson_date,
+            start_time=params.start_time,
+            end_time=params.end_time,
+            instructor=params.instructor,
+            lesson_type="rijles",
+            status="scheduled",
+            source="manual",
+        )
+        result: dict[str, Any] = _serialize_session(session_model)
+        result["tool"] = self.name
+        result["created"] = True
+        result["deduplicated"] = False
+        await ctx.audit.create(
+            action=self.name,
+            payload=result,
+            idempotency_key=idempotency_key,
+        )
+        return result
+
+
+class CancelLessonTool:
+    name = "cancel_lesson"
+    description = (
+        "Cancel a scheduled driving lesson recorded here. Auto-approved write. Pass "
+        "either the session_id, or the date (ISO YYYY-MM-DD) to cancel scheduled "
+        "lessons on that date. Idempotent: cancelling an already-cancelled or missing "
+        "lesson is a no-op that reports the current state. This only cancels the record "
+        "here — it cannot cancel a booking in the On My Way app."
+    )
+    tier = RiskTier.WRITE_AUTO
+
+    def openai_schema(self) -> dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": CancelLessonParams.model_json_schema(),
+            },
+        }
+
+    async def run(
+        self, arguments: dict[str, Any], ctx: ToolContext, idempotency_key: str | None
+    ) -> dict[str, Any]:
+        try:
+            params = CancelLessonParams.model_validate(arguments)
+        except ValidationError as exc:
+            raise ToolValidationError(self.name, str(exc)) from exc
+
+        if idempotency_key is not None:
+            prior = await ctx.audit.get_by_idempotency_key(idempotency_key)
+            if prior is not None:
+                return dict(prior.payload)  # type: ignore[arg-type]
+
+        target: SessionModel | None
+        if params.session_id is not None:
+            target = await ctx.sessions.get_by_id(params.session_id)
+        else:
+            # date path: cancel all scheduled lessons on that date (usually one).
+            day = date.fromisoformat(params.date)  # type: ignore[arg-type]
+            day_sessions = await ctx.sessions.get_by_date(day)
+            scheduled = [s for s in day_sessions if s.status == "scheduled"]
+            if not scheduled:
+                target = None
+            elif len(scheduled) == 1:
+                target = scheduled[0]
+            else:
+                cancelled: list[dict[str, Any]] = []
+                for s in scheduled:
+                    await ctx.sessions.set_status(s.id, "cancelled")
+                    cancelled.append(
+                        {"id": s.id, "date": s.date.isoformat(), "start_time": s.start_time}
+                    )
+                result_multi: dict[str, Any] = {
+                    "tool": self.name,
+                    "cancelled": cancelled,
+                    "count": len(cancelled),
+                    "already_cancelled": 0,
+                }
+                await ctx.audit.create(
+                    action=self.name,
+                    payload=result_multi,
+                    idempotency_key=idempotency_key,
+                )
+                return result_multi
+
+        if target is None:
+            result: dict[str, Any] = {
+                "tool": self.name,
+                "cancelled": [],
+                "count": 0,
+                "already_cancelled": 0,
+                "not_found": True,
+            }
+        elif target.status == "cancelled":
+            result = {
+                "tool": self.name,
+                "cancelled": [],
+                "count": 0,
+                "already_cancelled": 1,
+                "session": _serialize_session(target),
+            }
+        else:
+            await ctx.sessions.set_status(target.id, "cancelled")
+            result = {
+                "tool": self.name,
+                "cancelled": [
+                    {
+                        "id": target.id,
+                        "date": target.date.isoformat(),
+                        "start_time": target.start_time,
+                    }
+                ],
+                "count": 1,
+                "already_cancelled": 0,
+                "session": _serialize_session(target),
+            }
+        await ctx.audit.create(
+            action=self.name,
+            payload=result,
+            idempotency_key=idempotency_key,
+        )
+        return result
+
+
 # --- Phase 2 read tools (analytics) ---
 
 
@@ -469,6 +705,7 @@ class GetGapAnalysisTool:
             lessons_left=lessons_left,
             solid_count=solid_count,
             total_exam_relevant=total_exam_relevant,
+            exam_date=ctx.exam_date,
         )
         return {
             "tool": self.name,
@@ -478,6 +715,7 @@ class GetGapAnalysisTool:
                 "lessons_left": pace_result.lessons_left,
                 "weak_or_missing_count": pace_result.weak_or_missing_count,
                 "on_track": pace_result.on_track,
+                "verdict": pace_result.verdict,
                 "exam_date": ctx.exam_date.isoformat() if ctx.exam_date else None,
             },
         }
@@ -564,8 +802,10 @@ class GetPaceTool:
     name = "get_pace"
     description = (
         "The pace verdict: lessons remaining before the exam date versus the number of "
-        "skills not yet solid, and an on_track boolean "
-        "(on_track = lessons_left >= weak_or_missing_count)."
+        "skills not yet solid. Returns a `verdict` string — `no_exam_date` (no exam date "
+        "is set; on_track is undefined, but the counts are still reported), `on_track`, "
+        "or `off_track` — plus lessons_left, weak_or_missing_count, on_track (null when "
+        "no exam date), and the exam_date."
     )
     tier = RiskTier.READ
 
@@ -602,12 +842,14 @@ class GetPaceTool:
             lessons_left=lessons_left,
             solid_count=solid_count,
             total_exam_relevant=total_exam_relevant,
+            exam_date=ctx.exam_date,
         )
         return {
             "tool": self.name,
             "lessons_left": pace_result.lessons_left,
             "weak_or_missing_count": pace_result.weak_or_missing_count,
             "on_track": pace_result.on_track,
+            "verdict": pace_result.verdict,
             "exam_date": ctx.exam_date.isoformat() if ctx.exam_date else None,
         }
 
@@ -810,7 +1052,7 @@ class WebSearchCbrTool:
 
 
 def phase2_tools() -> list[Tool]:
-    """The full Phase 2 tool registry: all read tools + log_lesson + docs stack."""
+    """The full Phase 2 tool registry: all read tools + write tools + docs stack."""
     return [
         GetNextLessonsTool(),
         GetLessonHistoryTool(),
@@ -824,6 +1066,8 @@ def phase2_tools() -> list[Tool]:
         CbrSearchTool(),
         WebSearchCbrTool(),
         LogLessonTool(),
+        AddLessonTool(),
+        CancelLessonTool(),
     ]
 
 
@@ -840,7 +1084,7 @@ _READ_TOOLS: frozenset[str] = frozenset(
 _DOCS_TOOLS: frozenset[str] = frozenset(
     {"get_cbr_info", "get_toc", "get_section", "cbr_search", "web_search_cbr"}
 )
-_WRITE_TOOLS: frozenset[str] = frozenset({"log_lesson"})
+_WRITE_TOOLS: frozenset[str] = frozenset({"log_lesson", "add_lesson", "cancel_lesson"})
 
 
 def tools_for_label(label: str, all_tools: list[Tool]) -> list[Tool]:

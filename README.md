@@ -65,6 +65,19 @@ real section numbers (e.g. "Rijprocedure B, §3.7"). Analytics and docs route
 through the agent loop (the Phase 1 `PHASE2_PENDING` shortcut is gone). Email
 ingestion and digests arrive in later phases.
 
+### DRIVE-5 — manual lesson management + usability
+
+Two new write tools (tier `write_auto`, audit-logged, idempotent), routed via the
+`log` label (the only write-allowing path): `add_lesson(date, start_time,
+end_time?, instructor?)` records a lesson Daria booked in the On My Way app;
+`cancel_lesson(date | session_id)` cancels a recorded lesson. Both are picked up
+by `get_next_lessons`. Telegram replies are sent with `parse_mode=HTML`; the
+answer prompt emits `<b>`/`<i>` (no markdown), residual markdown is stripped
+before send. The semantic-layer `pace()` returns a `verdict` of `no_exam_date`
+(with counts, `on_track=null` — never `on_track=false`) when `EXAM_DATE` is
+unset, else `on_track`/`off_track`. Answers end with the information and never
+offer follow-up actions or questions (the bot has no conversation memory).
+
 Rebuild the knowledge base from the PDF (requires `DEEPL_API_KEY` for the
 English translation):
 
