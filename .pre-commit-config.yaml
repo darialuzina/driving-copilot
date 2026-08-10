@@ -6,6 +6,9 @@ repos:
     rev: v5.0.0
     hooks:
       - id: check-added-large-files
+        # The verbatim Rijprocedure B source PDF (~749KB) is committed as the
+        # knowledge-base source of truth (test_5a verifies headings against it).
+        args: [--maxkb=1024]
       - id: check-case-conflict
       - id: check-merge-conflict
       - id: check-toml

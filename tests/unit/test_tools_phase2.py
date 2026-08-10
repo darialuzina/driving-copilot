@@ -7,7 +7,9 @@ from app.services.tools import (
     GetCbrInfoTool,
     GetNotesTool,
     GetPaceTool,
+    GetSectionTool,
     GetSkillProgressTool,
+    GetTocTool,
     RiskTier,
     Tool,
     WebSearchCbrTool,
@@ -22,6 +24,8 @@ _READ_TOOL_INSTANCES: list[Tool] = [
     CbrSearchTool(),
     WebSearchCbrTool(),
     GetCbrInfoTool(),
+    GetTocTool(),
+    GetSectionTool(),
 ]
 
 
@@ -29,7 +33,7 @@ def test_tools_for_label_docs_has_no_write_tools() -> None:
     # spec: docs flow has no write tools (and no DB read tools).
     tools = tools_for_label("docs", phase2_tools())
     names = {t.name for t in tools}
-    assert names == {"get_cbr_info", "cbr_search", "web_search_cbr"}
+    assert names == {"get_cbr_info", "get_toc", "get_section", "cbr_search", "web_search_cbr"}
     assert "log_lesson" not in names
     assert "get_next_lessons" not in names
 
@@ -66,12 +70,12 @@ def test_tools_for_label_smalltalk_and_other_give_no_tools() -> None:
     assert tools_for_label("other", phase2_tools()) == []
 
 
-def test_phase2_registry_has_all_ten_tools() -> None:
+def test_phase2_registry_has_all_twelve_tools() -> None:
     names = {t.name for t in phase2_tools()}
     assert names == {
         "get_next_lessons", "get_lesson_history", "get_notes", "get_pace",
         "get_skill_progress", "get_gap_analysis",
-        "get_cbr_info", "cbr_search", "web_search_cbr",
+        "get_cbr_info", "get_toc", "get_section", "cbr_search", "web_search_cbr",
         "log_lesson",
     }
 

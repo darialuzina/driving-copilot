@@ -655,6 +655,71 @@ class GetCbrInfoTool:
         return result
 
 
+class GetTocTool:
+    name = "get_toc"
+    description = (
+        "Return the full section tree of the CBR Rijprocedure B (the official "
+        "driving-exam procedure): section ids, real section numbers, and titles in "
+        "English and Dutch, in document order. Use this first to navigate the document, "
+        "then call get_section with a chosen id. Cite sections by their real number."
+    )
+    tier = RiskTier.READ
+
+    def openai_schema(self) -> dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+
+    async def run(
+        self, arguments: dict[str, Any], ctx: ToolContext, idempotency_key: str | None
+    ) -> dict[str, Any]:
+        result = ctx.knowledge.get_toc()
+        result["tool"] = self.name
+        return result
+
+
+class GetSectionParams(ToolParams):
+    section_id: str = Field(
+        description="Section id from get_toc() (e.g. 's183'). Returns verbatim en + nl text."
+    )
+
+
+class GetSectionTool:
+    name = "get_section"
+    description = (
+        "Return one Rijprocedure B section's verbatim English and Dutch text plus its "
+        "real section number. Call get_toc() first to obtain section ids. "
+        "Cite the answer as 'Rijprocedure B, §<number>' (or the heading path if unnumbered)."
+    )
+    tier = RiskTier.READ
+
+    def openai_schema(self) -> dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": GetSectionParams.model_json_schema(),
+            },
+        }
+
+    async def run(
+        self, arguments: dict[str, Any], ctx: ToolContext, idempotency_key: str | None
+    ) -> dict[str, Any]:
+        try:
+            params = GetSectionParams.model_validate(arguments)
+        except ValidationError as exc:
+            raise ToolValidationError(self.name, str(exc)) from exc
+        result = ctx.knowledge.get_section(params.section_id)
+        result["tool"] = self.name
+        return result
+
+
 class CbrSearchParams(ToolParams):
     query: str = Field(description="Free-text query to search the CBR knowledge base.")
 
@@ -754,6 +819,8 @@ def phase2_tools() -> list[Tool]:
         GetSkillProgressTool(),
         GetGapAnalysisTool(),
         GetCbrInfoTool(),
+        GetTocTool(),
+        GetSectionTool(),
         CbrSearchTool(),
         WebSearchCbrTool(),
         LogLessonTool(),
@@ -771,7 +838,7 @@ _READ_TOOLS: frozenset[str] = frozenset(
     }
 )
 _DOCS_TOOLS: frozenset[str] = frozenset(
-    {"get_cbr_info", "cbr_search", "web_search_cbr"}
+    {"get_cbr_info", "get_toc", "get_section", "cbr_search", "web_search_cbr"}
 )
 _WRITE_TOOLS: frozenset[str] = frozenset({"log_lesson"})
 

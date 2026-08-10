@@ -376,7 +376,7 @@ async def test_docs_flow_exposes_no_write_tool_to_model(
         fn = cast(dict[str, object], s["function"])
         names.add(cast(str, fn["name"]))
     assert "log_lesson" not in names
-    assert names == {"get_cbr_info", "cbr_search", "web_search_cbr"}
+    assert names == {"get_cbr_info", "get_toc", "get_section", "cbr_search", "web_search_cbr"}
 
 
 # --- Out-of-scope still refuses honestly (unchanged Phase 1 behaviour) ---

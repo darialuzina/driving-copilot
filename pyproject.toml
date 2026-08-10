@@ -28,6 +28,7 @@ dev = [
     "bandit[toml]==1.9.4",
     "pip-audit==2.10.1",
     "locust==2.46.2",
+    "pymupdf>=1.28.2",
 ]
 
 [tool.ruff]
@@ -54,7 +55,7 @@ indent-style = "space"
 [tool.basedpyright]
 typeCheckingMode = "strict"
 pythonVersion = "3.14"
-exclude = ["alembic/**", ".venv/**", ".bootstrap/**", "locustfile.py", "litestar/**"]
+exclude = ["alembic/**", ".venv/**", ".bootstrap/**", "locustfile.py", "litestar/**", "scripts/**"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

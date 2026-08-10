@@ -15,6 +15,7 @@ See `driving-copilot-spec.md` for the full specification.
 - `python-telegram-bot` v22 (async), `openai` client against OpenRouter, `httpx` for Tavily
 - Two models via env: `ROUTER_MODEL` (classification) and `ANSWER_MODEL` (tool-calling + answers)
 - `TAVILY_API_KEY` for the cbr.nl-scoped live web fallback (`web_search_cbr`)
+- `DEEPL_API_KEY` (free tier) for translating the Rijprocedure B KB (build-time only)
 
 ## Setup
 
@@ -49,10 +50,26 @@ PYTHONPATH=. uv run python scripts/phase2_live_smoke.py
 Everything in Phase 1 plus the "brain": the semantic layer (`skill_status`, `pace`,
 `stale` — one code definition each per spec §3), the remaining read tools
 (`get_skill_progress`, `get_gap_analysis`, `get_notes`, `get_pace`), and the docs
-stack: `get_cbr_info` seeded from cbr.nl, Rijprocedure B converted to
-`knowledge/rijprocedure-b.md`, `cbr_search` over `knowledge/`, and `web_search_cbr`
-(Tavily, cbr.nl-scoped, fallback only, no write tools in that flow). Provenance
-rule #5 is active (KB section citation / "from cbr.nl just now" / "not from the CBR
-docs — general knowledge"). Analytics and docs route through the agent loop (the
-Phase 1 `PHASE2_PENDING` shortcut is gone). Email ingestion and digests arrive in
-later phases.
+stack. The CBR Rijprocedure B knowledge base is a **verbatim** conversion of the
+official CBR PDF (`knowledge/sources/rijprocedure-b.pdf`) into
+`knowledge/rijprocedure-b.nl.md` (297 sections, real numbering from the document's
+own table of contents) plus a faithful DeepL translation in
+`knowledge/rijprocedure-b.en.md`. Agentic navigation is exposed via `get_toc`
+(section tree: ids + en/nl titles + real numbers) and `get_section(section_id)`
+(verbatim en + nl text); `get_cbr_info` returns verbatim topic excerpts with the
+cbr.nl source URL and fetch date; `cbr_search` is keyword search over `knowledge/`;
+`web_search_cbr` (Tavily, cbr.nl-scoped) is fallback only, with no write tools in
+that flow. Provenance rule #5 is active (KB section citation / "from cbr.nl just
+now" / "not from the CBR docs — general knowledge"). Citations use the document's
+real section numbers (e.g. "Rijprocedure B, §3.7"). Analytics and docs route
+through the agent loop (the Phase 1 `PHASE2_PENDING` shortcut is gone). Email
+ingestion and digests arrive in later phases.
+
+Rebuild the knowledge base from the PDF (requires `DEEPL_API_KEY` for the
+English translation):
+
+```bash
+uv run python scripts/build_rijprocedure_nl.py   # PDF -> rijprocedure-b.nl.md
+uv run python scripts/build_rijprocedure_en.py   # DeepL -> rijprocedure-b.en.md
+uv run python scripts/build_cbr_topics.py        # verbatim topic excerpts
+```
