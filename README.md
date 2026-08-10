@@ -7,20 +7,21 @@ against the official CBR exam requirements, and answers questions in chat.
 Architecture: small-model router → typed tools → deterministic code → guardrails → evals.
 The model chooses and phrases; code computes. Every fact in an answer comes from a tool result.
 
-See `driving-copilot-spec_1.md` for the full specification.
+See `driving-copilot-spec.md` for the full specification.
 
 ## Stack
 
 - Python 3.14, async SQLAlchemy 2.0, PostgreSQL (docker-compose), Alembic
-- `python-telegram-bot` v21 (async), `openai` client against OpenRouter
+- `python-telegram-bot` v22 (async), `openai` client against OpenRouter, `httpx` for Tavily
 - Two models via env: `ROUTER_MODEL` (classification) and `ANSWER_MODEL` (tool-calling + answers)
+- `TAVILY_API_KEY` for the cbr.nl-scoped live web fallback (`web_search_cbr`)
 
 ## Setup
 
 ```bash
 uv sync
 docker compose up -d db
-cp .env.example .env   # then fill in TELEGRAM_BOT_TOKEN, ALLOWED_CHAT_ID, LLM_API_KEY
+cp .env.example .env   # then fill in TELEGRAM_BOT_TOKEN, ALLOWED_CHAT_ID, LLM_API_KEY, TAVILY_API_KEY
 alembic upgrade head   # creates tables + seeds the CBR skills matrix
 uv run python -m app.main backfill   # load Daria's lesson history (idempotent)
 uv run python -m app.main            # run the Telegram bot
@@ -37,11 +38,21 @@ uv run basedpyright
 uv run pytest -q
 ```
 
-## Phase 1 (current)
+Phase 2 live smoke (the three provenance label paths against the real LLM + Tavily):
 
-DB schema + seeded skills + backfill (spec section 11), Telegram bot with `/start`,
-intent router (6 labels), and tools: `get_next_lessons`, `get_lesson_history`,
-`log_lesson` (auto-approved write via chat). Router guardrail (date/count/id containment),
-hash-based write idempotency, structured LLM-call logging, and the starter golden eval
-set (`evals/golden.yaml`) are in place. Analytics, gap analysis, CBR knowledge,
-email ingestion, and digests arrive in later phases.
+```bash
+PYTHONPATH=. uv run python scripts/phase2_live_smoke.py
+```
+
+## Phase 2 (current)
+
+Everything in Phase 1 plus the "brain": the semantic layer (`skill_status`, `pace`,
+`stale` — one code definition each per spec §3), the remaining read tools
+(`get_skill_progress`, `get_gap_analysis`, `get_notes`, `get_pace`), and the docs
+stack: `get_cbr_info` seeded from cbr.nl, Rijprocedure B converted to
+`knowledge/rijprocedure-b.md`, `cbr_search` over `knowledge/`, and `web_search_cbr`
+(Tavily, cbr.nl-scoped, fallback only, no write tools in that flow). Provenance
+rule #5 is active (KB section citation / "from cbr.nl just now" / "not from the CBR
+docs — general knowledge"). Analytics and docs route through the agent loop (the
+Phase 1 `PHASE2_PENDING` shortcut is gone). Email ingestion and digests arrive in
+later phases.

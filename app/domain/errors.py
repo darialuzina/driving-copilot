@@ -24,3 +24,7 @@ class LlmCallError(DomainError):
 
 class ParseError(DomainError):
     """Structured output could not be parsed after retries."""
+
+
+class WebSearchError(DomainError):
+    """The live web-search fallback failed (config or network)."""

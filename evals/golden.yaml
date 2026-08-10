@@ -25,6 +25,10 @@ router:
     expect: log
   - message: "what do they check in the exam?"
     expect: docs
+  - message: "what is the default speed limit on a motorway?"   # traffic-law -> docs (general-knowledge provenance path)
+    expect: docs
+  - message: "какое ограничение скорости на трассе?"
+    expect: docs
   - message: "hi!"
     expect: smalltalk
   - message: "what tires should I buy?"
@@ -59,4 +63,26 @@ end_to_end:
     fixture: backfill
     must_contain:
       - "Desevio"
+    must_not_contain: []
+  # --- Phase 2 docs / provenance (spec section 9 acceptance) ---
+  - name: docs_kb_cites_rijprocedure_section
+    message: "can I fail for stalling?"
+    fixture: empty_db
+    route: docs
+    must_contain:
+      - "Rijprocedure B"
+    must_not_contain: []
+  - name: docs_kb_miss_uses_live_fallback_label
+    message: "how much does the practical exam cost?"
+    fixture: empty_db
+    route: docs
+    must_contain:
+      - "from cbr.nl just now"
+    must_not_contain: []
+  - name: docs_general_knowledge_label
+    message: "what is the default speed limit on a motorway in the Netherlands?"
+    fixture: empty_db
+    route: docs
+    must_contain:
+      - "not from the CBR docs"
     must_not_contain: []

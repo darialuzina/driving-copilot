@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -24,8 +25,10 @@ from app.repositories.lesson_note_repository import LessonNoteRepository
 from app.repositories.session_repository import SessionRepository
 from app.repositories.skill_repository import SkillRepository
 from app.services.agent import AgentService
+from app.services.knowledge import KnowledgeBase
 from app.services.router import LlmClient, RouterService
-from app.services.tools import Tool, ToolContext, phase1_tools
+from app.services.tools import Tool, ToolContext, phase2_tools
+from app.services.web_search import WebSearcher
 
 log = structlog.get_logger()
 
@@ -35,6 +38,8 @@ START_TEXT = (
     '- look up your upcoming and past lessons ("when is my next lesson?", '
     '"what did we do last time?")\n'
     '- look up your notes ("what did I write about highways?")\n'
+    '- analyse your progress ("what are my weak areas?", "am I on track?")\n'
+    '- answer CBR exam questions ("what do they check on bijzondere verrichtingen?")\n'
     '- log what you practiced ("today we did parking, went ok")\n\n'
     "Just write to me in Russian or English."
 )
@@ -54,7 +59,7 @@ class Copilot:
         return cls(
             router=RouterService(client, settings),
             agent=AgentService(client, settings),
-            tools=phase1_tools(),
+            tools=phase2_tools(),
             settings=settings,
         )
 
@@ -79,7 +84,20 @@ def _tool_context(session: AsyncSession, settings: Settings) -> ToolContext:
         notes=LessonNoteRepository(session),
         audit=AuditLogRepository(session),
         timezone=ZoneInfo(settings.timezone),
+        knowledge=KnowledgeBase(settings.knowledge_dir),
+        web=WebSearcher(settings.tavily_api_key),
+        exam_date=_parse_exam_date(settings.exam_date),
     )
+
+
+def _parse_exam_date(value: str | None) -> date | None:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        log.warning("bot.bad_exam_date", value=value)
+        return None
 
 
 def build_application(

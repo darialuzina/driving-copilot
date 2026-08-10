@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -12,17 +13,21 @@ from app.repositories.audit_log_repository import AuditLogRepository
 from app.repositories.lesson_note_repository import LessonNoteRepository
 from app.repositories.session_repository import SessionRepository
 from app.repositories.skill_repository import SkillRepository
+from app.services.knowledge import KnowledgeBase
 from app.services.tools import LogLessonTool, ToolContext
+from app.services.web_search import WebSearcher
 
 
 @pytest.fixture
-def ctx(session: AsyncSession) -> ToolContext:
+def ctx(session: AsyncSession, tmp_path: Path) -> ToolContext:
     return ToolContext(
         sessions=SessionRepository(session),
         skills=SkillRepository(session),
         notes=LessonNoteRepository(session),
         audit=AuditLogRepository(session),
         timezone=ZoneInfo("Europe/Amsterdam"),
+        knowledge=KnowledgeBase(tmp_path / "knowledge"),
+        web=WebSearcher(""),
     )
 
 

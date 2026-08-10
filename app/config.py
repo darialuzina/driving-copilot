@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     # --- fixtures ---
     backfill_path: Path = Path("fixtures/backfill.yaml")
 
+    # --- Phase 2: docs stack ---
+    knowledge_dir: Path = Path("knowledge")
+    # Tavily key for the cbr.nl-scoped live web fallback (web_search_cbr).
+    # The model never sees this key; deterministic code holds it.
+    tavily_api_key: str = ""
+
 
 def get_settings() -> Settings:
     return Settings()
