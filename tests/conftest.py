@@ -100,7 +100,39 @@ class FakeLlmClient:
         messages: list[dict[str, object]],
         tools: list[dict[str, object]],
     ) -> CompletionLike:
-        self.completion_calls.append({"model": model, "messages": messages, "tools": tools})
+        # Snapshot the messages list at call time: _agent_loop mutates one list in
+        # place across turns, so a bare reference would make every completion_calls
+        # entry point at the same final list. A shallow copy freezes the state.
+        self.completion_calls.append(
+            {"model": model, "messages": list(messages), "tools": tools}
+        )
         if not self.completions:
             raise AssertionError("no canned completion")
         return cast(CompletionLike, self.completions.pop(0))
+
+
+@dataclass
+class FakeWebResult:
+    title: str
+    url: str
+    content: str
+
+
+class FakeWebSearcher:
+    """Stand-in for app.services.web_search.WebSearcher used in docs tests."""
+
+    def __init__(self, results: list[FakeWebResult] | None = None) -> None:
+        self.enabled = True
+        self._results = results or []
+        self.calls: list[str] = []
+
+    async def search(self, query: str) -> object:
+        from app.services.web_search import WebResult, WebSearchOutcome
+
+        self.calls.append(query)
+        return WebSearchOutcome(
+            query=query,
+            results=[WebResult(r.title, r.url, r.content) for r in self._results],
+            source_type="web",
+            answer=None,
+        )

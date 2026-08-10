@@ -9,7 +9,7 @@ from typing import Any, TypedDict, cast
 import structlog
 
 from app.config import Settings
-from app.domain.errors import LlmCallError, ToolValidationError
+from app.domain.errors import LlmCallError, ToolValidationError, WebSearchError
 from app.services.llm_types import (
     CompletionLike,
     MessageLike,
@@ -18,11 +18,10 @@ from app.services.llm_types import (
 )
 from app.services.prompts import (
     ANSWER_SYSTEM_PROMPT,
-    PHASE2_PENDING_MESSAGE,
     REFUSAL_SYSTEM_PROMPT,
 )
 from app.services.router import LlmClient
-from app.services.tools import Tool, ToolContext, dump_tool_result, tool_by_name
+from app.services.tools import Tool, ToolContext, dump_tool_result, tool_by_name, tools_for_label
 
 log = structlog.get_logger()
 
@@ -60,13 +59,13 @@ class AgentService:
         self._settings = settings
 
     async def handle(self, message: str, label: str, tools: list[Tool], ctx: ToolContext) -> str:
-        if label in ("analytics", "docs"):
-            # Phase 1 skeleton: these capabilities arrive in Phase 2.
-            return PHASE2_PENDING_MESSAGE
         if label in ("smalltalk", "other"):
             return await self._freeform(message, refusal=(label == "other"))
-        # log + lookup -> tool-calling agent loop.
-        return await self._agent_loop(message, tools, ctx)
+        # log + lookup + analytics + docs -> typed tool-calling agent loop.
+        # The router's coarse job is path safety: docs get no write tools and no DB
+        # read tools (only the docs stack). See tools_for_label.
+        subset = tools_for_label(label, tools)
+        return await self._agent_loop(message, subset, ctx)
 
     async def _freeform(self, message: str, *, refusal: bool) -> str:
         system = REFUSAL_SYSTEM_PROMPT if refusal else ANSWER_SYSTEM_PROMPT
@@ -223,6 +222,11 @@ class AgentService:
         except ToolValidationError as exc:
             # Structured error back to the model so it can retry with valid params.
             return {"tool": name, "error": exc.reason}
+        except WebSearchError as exc:
+            # The live fallback failed (config/network). Tell the model honestly; it
+            # must not invent cbr.nl content — it should say the live search is
+            # unavailable or fall back to the KB / general-knowledge label.
+            return {"tool": name, "error": f"web search unavailable: {exc}"}
 
 
 def _assistant_message(completion: CompletionLike) -> MessageLike:

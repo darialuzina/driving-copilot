@@ -80,3 +80,21 @@ class SessionRepository:
         )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
+
+    async def count_scheduled_from(
+        self, today: date, until: date | None = None
+    ) -> int:
+        """Count scheduled sessions with date >= today (and <= until if given).
+
+        Used by pace() to compute lessons remaining before the exam date. When no
+        exam date is set, counts all upcoming scheduled lessons.
+        """
+        stmt = (
+            select(SessionModel.id)
+            .where(SessionModel.date >= today)
+            .where(SessionModel.status == "scheduled")
+        )
+        if until is not None:
+            stmt = stmt.where(SessionModel.date <= until)
+        result = await self._session.execute(stmt)
+        return len(result.all())

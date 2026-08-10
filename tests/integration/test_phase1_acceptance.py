@@ -17,7 +17,9 @@ from app.repositories.session_repository import SessionRepository
 from app.repositories.skill_repository import SkillRepository
 from app.services.agent import AgentService
 from app.services.backfill import load_backfill
-from app.services.tools import ToolContext, phase1_tools
+from app.services.knowledge import KnowledgeBase
+from app.services.tools import ToolContext, phase2_tools
+from app.services.web_search import WebSearcher
 from tests.conftest import FakeLlmClient, make_completion
 
 BACKFILL = Path("fixtures/backfill.yaml")
@@ -33,13 +35,15 @@ def settings(tmp_path: Path) -> Settings:
 
 
 @pytest.fixture
-def ctx(session: AsyncSession) -> ToolContext:
+def ctx(session: AsyncSession, tmp_path: Path) -> ToolContext:
     return ToolContext(
         sessions=SessionRepository(session),
         skills=SkillRepository(session),
         notes=LessonNoteRepository(session),
         audit=AuditLogRepository(session),
         timezone=ZoneInfo("Europe/Amsterdam"),
+        knowledge=KnowledgeBase(tmp_path / "knowledge"),
+        web=WebSearcher(""),
     )
 
 
@@ -80,7 +84,7 @@ async def test_acceptance_log_lesson_creates_note_linked_to_parking(
         ]
     )
     agent = AgentService(client, settings)
-    reply = await agent.handle("сегодня делали парковку, все ок", "log", phase1_tools(), ctx)
+    reply = await agent.handle("сегодня делали парковку, все ок", "log", phase2_tools(), ctx)
 
     assert "parking" in reply.lower()
     notes = (await session.execute(select(LessonNoteModel))).scalars().all()
@@ -103,7 +107,7 @@ async def test_acceptance_next_lesson_answers_from_db_empty(
         ]
     )
     agent = AgentService(client, settings)
-    reply = await agent.handle("when is my next lesson?", "lookup", phase1_tools(), ctx)
+    reply = await agent.handle("when is my next lesson?", "lookup", phase2_tools(), ctx)
     assert "no upcoming" in reply.lower()
     payload = _tool_result_payload(client)
     assert payload["tool"] == "get_next_lessons"
@@ -126,7 +130,7 @@ async def test_acceptance_what_did_we_do_on_july_30_returns_backfilled_notes(
         ]
     )
     agent = AgentService(client, settings)
-    reply = await agent.handle("what did we do on July 30?", "lookup", phase1_tools(), ctx)
+    reply = await agent.handle("what did we do on July 30?", "lookup", phase2_tools(), ctx)
     assert "2026-07-30" in reply
     payload = _tool_result_payload(client)
     sessions = cast(list[dict[str, object]], payload["sessions"])
@@ -143,7 +147,7 @@ async def test_acceptance_refusal_out_of_scope(ctx: ToolContext, settings: Setti
         chat_responses=["I can't help with buying a car — I track your lessons and notes."]
     )
     agent = AgentService(client, settings)
-    reply = await agent.handle("what tires should I buy?", "other", phase1_tools(), ctx)
+    reply = await agent.handle("what tires should I buy?", "other", phase2_tools(), ctx)
     assert "can't" in reply.lower() or "cannot" in reply.lower()
 
 
@@ -152,7 +156,7 @@ async def test_agent_degrades_on_empty_completion(ctx: ToolContext, settings: Se
 
     client = FakeLlmClient(completions=[FakeCompletion(choices=[])])
     agent = AgentService(client, settings)
-    reply = await agent.handle("hi", "lookup", phase1_tools(), ctx)
+    reply = await agent.handle("hi", "lookup", phase2_tools(), ctx)
     assert "couldn't" in reply.lower()
 
 
@@ -177,7 +181,7 @@ async def test_agent_loop_logs_llm_calls_with_model_latency_tokens(
     )
     agent = AgentService(client, settings)
     with capture_logs() as logs:
-        reply = await agent.handle("when is my next lesson?", "lookup", phase1_tools(), ctx)
+        reply = await agent.handle("when is my next lesson?", "lookup", phase2_tools(), ctx)
     assert "no upcoming" in reply.lower()
     llm_calls = [e for e in logs if e["event"] == "llm.call"]
     # One call per turn (tool call turn + answer turn).
@@ -215,7 +219,7 @@ async def test_agent_dedups_identical_log_lesson_retries_via_hash_key(
         ]
     )
     agent = AgentService(client, settings)
-    await agent.handle("сегодня делали парковку, все ок", "log", phase1_tools(), ctx)
+    await agent.handle("сегодня делали парковку, все ок", "log", phase2_tools(), ctx)
 
     notes = (await session.execute(select(LessonNoteModel))).scalars().all()
     assert len(notes) == 1
