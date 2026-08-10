@@ -96,7 +96,15 @@ async def test_gap_analysis_weak_ranked_by_exam_weight(
     # All weak skills are exam-relevant in the backfill; the ordering is stable by id.
     for s in result["weak"]:
         assert s["exam_relevant"] is True
-    assert result["pace"]["on_track"] is False or result["pace"]["on_track"] is True
+    # The weak list is ordered by the rank key: exam-relevant first, then severity,
+    # then id ascending (the stable tie-breaker). All weak here are exam-relevant,
+    # so ids must be ascending.
+    weak_ids = [s["id"] for s in result["weak"]]
+    assert weak_ids == sorted(weak_ids)
+    # No scheduled lessons and no solid skills -> not on track, and every exam-relevant
+    # skill counts as weak-or-missing.
+    assert result["pace"]["on_track"] is False
+    assert result["pace"]["weak_or_missing_count"] >= len(result["weak"])
 
 
 async def test_get_skill_progress_reflects_improvement_with_dates(
@@ -292,6 +300,8 @@ async def test_docs_kb_miss_uses_live_fallback_with_label(
     agent = AgentService(client, settings)
     reply = await agent.handle("how much does the exam cost?", "docs", phase2_tools(), ctx)
     assert "from cbr.nl just now" in reply
+    # The reply must derive from the fake web result, not be invented.
+    assert "380" in reply
     assert web.calls == ["praktijkexamen kosten"]
     # The cbr_search hit returned nothing (KB miss).
     first_payload = _tool_result_payload(client, turn=1)
@@ -355,7 +365,7 @@ async def test_docs_flow_exposes_no_write_tool_to_model(
             make_completion(
                 calls=[_tool_call("c1", "cbr_search", {"query": "exam structure"})]
             ),
-            make_completion(content="Rijprocedure B covers the exam parts."),
+            make_completion(content="Rijprocedure B, §Toepassing covers the exam parts."),
         ]
     )
     agent = AgentService(client, settings)
@@ -408,10 +418,171 @@ async def test_web_search_unavailable_returns_honest_error_to_model(
                     "the live search is unavailable right now."
                 )
             ),
+            # Guardrail retry: provenance rule #5 is enforced on every docs answer, so
+            # this marker-less honest no-result answer is retried once then degraded.
+            make_completion(
+                content=(
+                    "I couldn't find exam fees in the CBR knowledge base and "
+                    "the live search is unavailable right now."
+                )
+            ),
         ]
     )
     agent = AgentService(client, settings)
     reply = await agent.handle("how much is the exam?", "docs", phase2_tools(), ctx)
     assert "unavailable" in reply.lower()
+    assert reply.startswith("\u26a0\ufe0f")
     web_payload = _tool_result_payload(client, turn=2)
     assert "error" in web_payload
+
+
+# --- Stale flag: a solid skill not practised in 21+ days (review 5.2) ---
+
+
+async def test_get_skill_progress_flags_stale_solid_skill(
+    session: AsyncSession, settings: Settings
+) -> None:
+    # Build a solid skill (last two assessments good) older than 21 days, in-transaction.
+    skills_repo = SkillRepository(session)
+    sessions_repo = SessionRepository(session)
+    notes_repo = LessonNoteRepository(session)
+    all_skills = await skills_repo.all()
+    target = next(s for s in all_skills if s.name == "parallel parking")
+    s1 = await sessions_repo.create(
+        date=date(2026, 6, 19), status="completed", source="manual"
+    )
+    await notes_repo.create(
+        session_id=s1.id, skill_id=target.id, note="clean parking", assessment="good"
+    )
+    s2 = await sessions_repo.create(
+        date=date(2026, 7, 6), status="completed", source="manual"
+    )
+    await notes_repo.create(
+        session_id=s2.id, skill_id=target.id, note="still clean", assessment="good"
+    )
+    ctx = _ctx(session)
+    from app.services.tools import GetSkillProgressTool
+
+    result = await GetSkillProgressTool().run({}, ctx, idempotency_key=None)
+    by_name = {s["name"]: s for s in result["skills"]}
+    entry = by_name["parallel parking"]
+    assert entry["status"] == SkillStatus.SOLID.value
+    assert entry["last_practiced"] == "2026-07-06"
+    assert entry["stale"] is True
+
+
+# --- Guardrail degrades fabricated dates on the analytics path (review 3.2) ---
+
+
+async def test_analytics_guardrail_degrades_fabricated_date(
+    session: AsyncSession, settings: Settings
+) -> None:
+    await load_backfill(session, BACKFILL)
+    ctx = _ctx(session)
+    client = FakeLlmClient(
+        completions=[
+            make_completion(calls=[_tool_call("c1", "get_gap_analysis", {})]),
+            # First answer invents a date that does not appear in the tool results.
+            make_completion(
+                content="Your weakest area is roundabouts, last seen 2026-12-31."
+            ),
+            # Retry still invents it -> visibly degraded.
+            make_completion(
+                content="Your weakest area is roundabouts, last seen 2026-12-31."
+            ),
+        ]
+    )
+    agent = AgentService(client, settings)
+    reply = await agent.handle("what is my weakest area?", "analytics", phase2_tools(), ctx)
+    assert reply.startswith("\u26a0\ufe0f")
+    assert "2026-12-31" in reply
+
+
+# --- Provenance rule #5 enforced on the docs path (review 3.1) ---
+
+
+async def test_docs_answer_without_provenance_marker_is_degraded(
+    session: AsyncSession, settings: Settings
+) -> None:
+    ctx = _ctx(session)
+    client = FakeLlmClient(
+        completions=[
+            make_completion(
+                calls=[_tool_call("c1", "cbr_search", {"query": "exam structure"})]
+            ),
+            # First answer: a knowledge claim with no provenance marker.
+            make_completion(content="The exam has several parts and checks various skills."),
+            # Retry: still no marker -> visibly degraded.
+            make_completion(content="The exam has several parts and checks various skills."),
+        ]
+    )
+    agent = AgentService(client, settings)
+    reply = await agent.handle("what is the exam?", "docs", phase2_tools(), ctx)
+    assert reply.startswith("\u26a0\ufe0f")
+    # The three markers must all be absent from the degraded reply.
+    assert "Rijprocedure B, §" not in reply
+    assert "from cbr.nl just now" not in reply
+    assert "not from the CBR docs" not in reply
+
+
+async def test_docs_kb_citation_passes_provenance_guardrail(
+    session: AsyncSession, settings: Settings
+) -> None:
+    ctx = _ctx(session)
+    client = FakeLlmClient(
+        completions=[
+            make_completion(
+                calls=[_tool_call("c1", "cbr_search", {"query": "stalling fail"})]
+            ),
+            make_completion(
+                content="Rijprocedure B, §Toepassing: a single stall is not an automatic fail."
+            ),
+        ]
+    )
+    agent = AgentService(client, settings)
+    reply = await agent.handle("can I fail for stalling?", "docs", phase2_tools(), ctx)
+    assert not reply.startswith("\u26a0\ufe0f")
+    assert "Rijprocedure B, §" in reply
+
+
+async def test_docs_live_marker_passes_provenance_guardrail(
+    session: AsyncSession, settings: Settings
+) -> None:
+    web = FakeWebSearcher(
+        results=[FakeWebResult("Tarieven", "https://www.cbr.nl/tarieven", "Exam costs EUR 380.")]
+    )
+    ctx = _ctx(session, web=web)
+    client = FakeLlmClient(
+        completions=[
+            make_completion(calls=[_tool_call("c1", "cbr_search", {"query": "fees"})]),
+            make_completion(calls=[_tool_call("c2", "web_search_cbr", {"query": "kosten"})]),
+            make_completion(content="from cbr.nl just now: the exam costs EUR 380."),
+        ]
+    )
+    agent = AgentService(client, settings)
+    reply = await agent.handle("how much is the exam?", "docs", phase2_tools(), ctx)
+    assert not reply.startswith("\u26a0\ufe0f")
+    assert "from cbr.nl just now" in reply
+
+
+async def test_docs_general_knowledge_marker_passes_provenance_guardrail(
+    session: AsyncSession, settings: Settings
+) -> None:
+    web = FakeWebSearcher(results=[])
+    ctx = _ctx(session, web=web)
+    client = FakeLlmClient(
+        completions=[
+            make_completion(calls=[_tool_call("c1", "cbr_search", {"query": "motorway limit"})]),
+            make_completion(calls=[_tool_call("c2", "web_search_cbr", {"query": "snelweg"})]),
+            make_completion(
+                content=(
+                    "not from the CBR docs — general knowledge, verify in your "
+                    "theory book: motorway limits are shown on blue signs."
+                )
+            ),
+        ]
+    )
+    agent = AgentService(client, settings)
+    reply = await agent.handle("what is the motorway limit?", "docs", phase2_tools(), ctx)
+    assert not reply.startswith("\u26a0\ufe0f")
+    assert "not from the CBR docs" in reply

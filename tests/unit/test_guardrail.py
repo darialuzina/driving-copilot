@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.services.agent import containment_ok
+from app.services.agent import containment_ok, provenance_ok
 
 
 def test_no_tool_results_passes() -> None:
@@ -55,3 +55,41 @@ def test_non_id_number_still_uses_substring_check() -> None:
     # "3 lessons" is not an id reference (number before the keyword); count check applies.
     assert containment_ok("you have 3 lessons", ['{"count":3}']) is True
     assert containment_ok("you have 4 lessons", ['{"count":3}']) is False
+
+
+# --- Provenance rule #5: docs answers need exactly one of three markers ---
+
+
+def test_provenance_kb_citation_passes() -> None:
+    assert provenance_ok("Rijprocedure B, §3.7: the examiner picks two manoeuvres.") is True
+
+
+def test_provenance_live_marker_passes() -> None:
+    assert provenance_ok("from cbr.nl just now: the exam costs EUR 380.") is True
+
+
+def test_provenance_general_knowledge_marker_passes() -> None:
+    assert (
+        provenance_ok(
+            "not from the CBR docs — general knowledge, verify in your theory book: "
+            "the default motorway limit is 120 km/h."
+        )
+        is True
+    )
+
+
+def test_provenance_markerless_answer_fails() -> None:
+    assert provenance_ok("The exam has several parts and checks various skills.") is False
+
+
+def test_provenance_multiple_markers_fail() -> None:
+    # An answer must not carry two provenance markers (contradictory sourcing).
+    answer = (
+        "from cbr.nl just now: something. "
+        "not from the CBR docs — general knowledge, verify in your theory book: else."
+    )
+    assert provenance_ok(answer) is False
+
+
+def test_provenance_kb_citation_is_case_insensitive_and_spacing_tolerant() -> None:
+    assert provenance_ok("rijprocedure b,§3.7 covers this.") is True
