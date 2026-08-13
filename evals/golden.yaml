@@ -17,6 +17,13 @@ router:
     expect: lookup
   - message: "когда у меня следующий урок?"
     expect: lookup
+  # --- DRIVE-8: notes-by-date phrasings route to lookup, not other (week-one misroute) ---
+  - message: "what are my notes from 13/08?"
+    expect: lookup
+  - message: "what did I write on 2026-08-13?"
+    expect: lookup
+  - message: "покажи мои записи за 13 августа"
+    expect: lookup
   - message: "how is my parking?"
     expect: analytics
   - message: "how did my rotondes go?"           # Dutch term embedded in English

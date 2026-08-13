@@ -124,6 +124,15 @@ def test_prompts_no_on_my_way_app_references() -> None:
     assert "driving school's booking app" in REFUSAL_SYSTEM_PROMPT
 
 
+def test_refusal_prompt_uses_your_not_our_driving_school() -> None:
+    # DRIVE-8: a production refusal said "our driving school's booking app". The
+    # copilot is not a driving school — the prompt must say Daria's ("your"),
+    # and explicitly forbid the "our" phrasing so the model stops reproducing it.
+    assert "your driving school's booking app" in REFUSAL_SYSTEM_PROMPT
+    assert '"our driving school' in REFUSAL_SYSTEM_PROMPT
+    assert "never" in REFUSAL_SYSTEM_PROMPT.lower()
+
+
 def test_answer_prompt_clarification_rule_present() -> None:
     # The bot has no memory: missing info must trigger a "resend the full request"
     # instruction with an example, never a bare clarifying question.

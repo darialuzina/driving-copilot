@@ -107,6 +107,28 @@ Vehicle-control skills Daria's instructor treats as distinct — braking control
 (Alembic migration `0003`) so free-text notes match them instead of falling
 through to general notes.
 
+### DRIVE-8 — production week-one findings
+
+Four fixes from the first week of real usage:
+
+- **Resilience.** Transient LLM/API errors (`LlmCallError`,
+  `RouterUnavailableError`) now get one automatic retry with a short backoff
+  before the user-facing "Sorry, I couldn't process that right now" fallback.
+  Each retry is logged with the underlying error class (`bot.transient_retry`).
+  Two week-one failures that both succeeded on an immediate rephrase are now
+  recovered automatically. Writes are safe to re-run: write tools carry
+  idempotency keys and dedupe against the failed attempt's audit rows.
+- **Session lifecycle.** `log_lesson` attaching notes to a session dated today
+  or earlier that is still `status=scheduled` now marks it `completed`, so
+  `pace()` stops counting a finished lesson as "1 lesson remaining". The one
+  affected production row (session 7) is flipped via Alembic migration `0004`.
+- **Router.** Notes-by-date phrasings ("what are my notes from 13/08?") were
+  mislabelled `other` and refused. The router prompt and `evals/golden.yaml`
+  gained notes-by-date examples (English + Russian) routing to `lookup`.
+- **Copy.** A production refusal said "our driving school's booking app". The
+  refusal prompt now says Daria's ("your driving school's booking app") and
+  explicitly forbids "our" — the copilot is not a driving school.
+
 Rebuild the knowledge base from the PDF (requires `DEEPL_API_KEY` for the
 English translation):
 

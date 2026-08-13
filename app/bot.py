@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Coroutine
+import asyncio
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from datetime import date
 from typing import Any, Protocol
@@ -20,7 +21,7 @@ from telegram.ext import (
 
 from app.config import Settings, get_settings
 from app.db.session import get_sessionmaker
-from app.domain.errors import DomainError
+from app.domain.errors import DomainError, LlmCallError, RouterUnavailableError
 from app.repositories.audit_log_repository import AuditLogRepository
 from app.repositories.lesson_note_repository import LessonNoteRepository
 from app.repositories.session_repository import SessionRepository
@@ -33,6 +34,14 @@ from app.services.tools import Tool, ToolContext, phase2_tools
 from app.services.web_search import WebSearcher
 
 log = structlog.get_logger()
+
+# Transient LLM/API errors (rate limits, network blips, provider 5xx) get one
+# automatic retry with a short backoff before the user-facing "Sorry, I couldn't
+# process" fallback (DRIVE-8). Production week-one had two failures that both
+# succeeded on an immediate rephrase — a single retry recovers those without
+# making Daria re-send. Non-transient DomainErrors (tool validation, web search)
+# are handled inside the agent loop and never reach here.
+_TRANSIENT_BACKOFF_SECONDS = 1.0
 
 START_TEXT = (
     "Hi Daria! I'm your driving-exam copilot.\n\n"
@@ -68,17 +77,46 @@ class Copilot:
         )
 
     async def respond(self, message: str) -> str:
-        label = await self.router.classify(message)
+        label = await with_transient_retry(
+            lambda: self.router.classify(message), stage="router"
+        )
         async with get_sessionmaker()() as session:
             ctx = _tool_context(session, self.settings)
             try:
-                reply = await self.agent.handle(message, label, self.tools, ctx)
+                reply = await with_transient_retry(
+                    lambda: self.agent.handle(message, label, self.tools, ctx),
+                    stage="agent",
+                )
                 await session.commit()
                 log.info("bot.respond", label=label, chars=len(reply))
                 return reply
             except DomainError:
                 await session.rollback()
                 raise
+
+
+async def with_transient_retry[T](
+    factory: Callable[[], Awaitable[T]],
+    *,
+    stage: str,
+    backoff_seconds: float = _TRANSIENT_BACKOFF_SECONDS,
+) -> T:
+    """Run an LLM-dependent call once; on a transient LLM/API error retry once
+    after a short backoff, logging the underlying error class. A second failure
+    re-raises so the caller's fallback path applies.
+
+    `factory` returns a fresh coroutine each call so the work can be re-issued.
+    Writes inside the call are safe to re-run: write tools carry idempotency keys
+    and dedupe against the same-session audit rows from the failed attempt.
+    """
+    try:
+        return await factory()
+    except (LlmCallError, RouterUnavailableError) as exc:
+        log.warning(
+            "bot.transient_retry", stage=stage, error_class=type(exc).__name__
+        )
+        await asyncio.sleep(backoff_seconds)
+        return await factory()
 
 
 def _tool_context(session: AsyncSession, settings: Settings) -> ToolContext:
@@ -175,4 +213,12 @@ def run(copilot: Copilot, settings: Settings) -> None:
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
-__all__ = ["START_TEXT", "Copilot", "build_application", "get_settings", "is_allowed_chat", "run"]
+__all__ = [
+    "START_TEXT",
+    "Copilot",
+    "build_application",
+    "get_settings",
+    "is_allowed_chat",
+    "run",
+    "with_transient_retry",
+]

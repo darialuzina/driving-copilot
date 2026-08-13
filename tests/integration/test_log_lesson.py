@@ -8,13 +8,13 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import LessonNoteModel
+from app.db.models import LessonNoteModel, SessionModel
 from app.repositories.audit_log_repository import AuditLogRepository
 from app.repositories.lesson_note_repository import LessonNoteRepository
 from app.repositories.session_repository import SessionRepository
 from app.repositories.skill_repository import SkillRepository
 from app.services.knowledge import KnowledgeBase
-from app.services.tools import LogLessonTool, ToolContext
+from app.services.tools import AddLessonTool, LogLessonTool, ToolContext
 from app.services.web_search import WebSearcher
 
 
@@ -175,3 +175,89 @@ async def test_log_lesson_accepts_date_within_30_days(ctx: ToolContext) -> None:
         idempotency_key="log:recent",
     )
     assert result["date"] == recent
+
+
+# --- DRIVE-8: log_lesson completes a still-scheduled session dated today/earlier ---
+
+
+async def test_log_lesson_marks_today_scheduled_session_completed(
+    session: AsyncSession, ctx: ToolContext
+) -> None:
+    # A lesson booked for today (status=scheduled) that Daria then practices.
+    today = ctx.today()
+    await AddLessonTool().run(
+        {"date": today.isoformat(), "start_time": "15:00"},
+        ctx,
+        idempotency_key="add:today-scheduled",
+    )
+    result = await LogLessonTool().run(
+        {"date": "today", "skills": [{"skill": "parking", "assessment": "good", "note": "ok"}]},
+        ctx,
+        idempotency_key="log:today-scheduled",
+    )
+    # The transition is surfaced to the model and persisted.
+    assert result["session_status"] == "completed"
+    sessions = await SessionRepository(session).get_by_date(today)
+    assert len(sessions) == 1
+    assert sessions[0].status == "completed"
+
+
+async def test_log_lesson_marks_past_scheduled_session_completed(
+    session: AsyncSession, ctx: ToolContext
+) -> None:
+    # A scheduled session from a few days ago (e.g. an email booking never flipped
+    # to completed) that Daria logs notes against now.
+    past = ctx.today() - timedelta(days=3)
+    await ctx.sessions.create(
+        date=past, start_time="10:00", status="scheduled", source="email"
+    )
+    result = await LogLessonTool().run(
+        {
+            "date": past.isoformat(),
+            "skills": [{"skill": "parking", "assessment": "ok", "note": "x"}],
+        },
+        ctx,
+        idempotency_key="log:past-scheduled",
+    )
+    assert result["session_status"] == "completed"
+    rows = (
+        (await session.execute(select(SessionModel).where(SessionModel.date == past)))
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+    assert rows[0].status == "completed"
+
+
+async def test_log_lesson_new_session_is_completed_and_reports_status(ctx: ToolContext) -> None:
+    # No prior session -> log_lesson creates a manual completed one; the result
+    # surfaces that status (regression guard for the session_status field).
+    result = await LogLessonTool().run(
+        {"date": "today", "skills": [{"skill": "parking", "assessment": "good", "note": "x"}]},
+        ctx,
+        idempotency_key="log:new-status",
+    )
+    assert result["session_status"] == "completed"
+
+
+async def test_log_lesson_does_not_touch_already_completed_session(
+    session: AsyncSession, ctx: ToolContext
+) -> None:
+    # An already-completed session must stay completed (idempotent transition).
+    today = ctx.today()
+    await ctx.sessions.create(
+        date=today, start_time="09:00", status="completed", source="manual"
+    )
+    result = await LogLessonTool().run(
+        {"date": "today", "skills": [{"skill": "parking", "assessment": "good", "note": "x"}]},
+        ctx,
+        idempotency_key="log:already-done",
+    )
+    assert result["session_status"] == "completed"
+    rows = (
+        (await session.execute(select(SessionModel).where(SessionModel.date == today)))
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+    assert rows[0].status == "completed"

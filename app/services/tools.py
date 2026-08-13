@@ -286,6 +286,14 @@ class LogLessonTool:
                 date=lesson_date, status="completed", source="manual"
             )
 
+        # DRIVE-8: attaching notes to a session still marked `scheduled` means the
+        # lesson has actually happened (log_lesson only accepts today or a past date,
+        # validated above). Mark it completed so pace() stops counting a finished
+        # lesson as "1 lesson remaining" against the exam date. set_status mutates
+        # the identity-mapped instance, so `session_model` reflects the new status.
+        if session_model.status == "scheduled":
+            await ctx.sessions.set_status(session_model.id, "completed")
+
         all_skills = await ctx.skills.all()
         note_ids: list[int] = []
         matched: list[dict[str, Any]] = []
@@ -329,6 +337,7 @@ class LogLessonTool:
             "tool": self.name,
             "session_id": session_model.id,
             "date": lesson_date.isoformat(),
+            "session_status": session_model.status,
             "note_ids": note_ids,
             "matched_skills": matched,
             "unmatched_skills": unmatched,
