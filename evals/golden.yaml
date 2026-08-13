@@ -6,6 +6,8 @@
 # Schema:
 #   router:        message -> expected single label
 #   end_to_end:    message + fixture + must_contain / must_not_contain assertions
+#                  optional reply_language (English|Russian): the runner asserts the
+#                  answer's Cyrillic ratio matches the REPLY IN directive (DRIVE-7).
 #   backfill:      run against the section 11 backfill fixture
 
 version: 1
@@ -52,6 +54,11 @@ router:
   - message: "next friday i have a lesson with marco"          # relative future weekday
     expect: log
   - message: "урок в следующую пятницу в 14:00"
+    expect: log
+  # --- DRIVE-7: trial lesson / exam booking routes to log (add_lesson lesson_type) ---
+  - message: "i have a trial lesson next tuesday 15:00 with marco"   # proefles
+    expect: log
+  - message: "my practical exam is on 2026-09-10 at 09:00"           # exam
     expect: log
 
 end_to_end:
@@ -160,3 +167,40 @@ end_to_end:
     must_not_contain:
       - "which date"
       - "what time"
+  # --- DRIVE-7: add_lesson lesson_type (proefles / exam) ---
+  - name: add_lesson_trial_lesson_records_proefles
+    message: "I have a trial lesson on 2026-08-20 at 15:00 with Marco"
+    fixture: empty_db
+    route: log
+    must_contain:
+      - "2026-08-20"
+      - "proefles"
+    must_not_contain: []
+  - name: add_lesson_exam_records_exam_type
+    message: "my practical exam is on 2026-09-10 at 09:00"
+    fixture: empty_db
+    route: log
+    must_contain:
+      - "2026-09-10"
+      - "exam"
+    must_not_contain: []
+  # --- DRIVE-7: language enforcement (REPLY IN directive + guardrail) ---
+  # The runner seeds Russian notes into the context for the English-question case so
+  # the drift bug (answer follows the tool-result language instead of the user's) is
+  # exercised. reply_language asserts the answer's Cyrillic ratio matches the directive.
+  - name: english_question_over_russian_notes_stays_english
+    message: "what are my weak areas?"
+    fixture: backfill_russian_notes
+    route: analytics
+    reply_language: English
+    must_contain:
+      - "roundabouts"
+    must_not_contain: []   # the reply_language assertion covers the Russian-drift check
+  - name: russian_question_over_english_notes_stays_russian
+    message: "какие у меня слабые места?"
+    fixture: backfill
+    route: analytics
+    reply_language: Russian
+    must_contain:
+      - "rotondes"         # Dutch term / skill name may appear embedded
+    must_not_contain: []

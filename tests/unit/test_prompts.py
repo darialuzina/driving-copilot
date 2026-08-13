@@ -129,3 +129,40 @@ def test_answer_prompt_clarification_rule_present() -> None:
     # instruction with an example, never a bare clarifying question.
     assert "RESEND THE FULL REQUEST" in ANSWER_SYSTEM_PROMPT
     assert "Пришлите одним сообщением" in ANSWER_SYSTEM_PROMPT
+
+
+# --- DRIVE-7: per-message REPLY IN directive injection ---
+
+
+def test_answer_prompt_injects_reply_in_directive_after_rule_one() -> None:
+    prompt = answer_system_prompt(date(2026, 8, 13), reply_in="English")
+    lines = prompt.splitlines()
+    # The #1 MUST FOLLOW rule stays in position #1.
+    assert lines[0].startswith("#1 MUST FOLLOW")
+    # The REPLY IN directive is injected right after it, before the today line.
+    assert lines[1] == "REPLY IN: English."
+    assert lines[2] == "Today is Thursday 2026-08-13."
+
+
+def test_answer_prompt_without_reply_in_only_has_today_line() -> None:
+    prompt = answer_system_prompt(date(2026, 8, 13))
+    lines = prompt.splitlines()
+    assert lines[0].startswith("#1 MUST FOLLOW")
+    assert lines[1] == "Today is Thursday 2026-08-13."
+
+
+def test_refusal_prompt_injects_reply_in_directive_after_rule_one() -> None:
+    prompt = refusal_system_prompt(date(2026, 8, 13), reply_in="Russian")
+    lines = prompt.splitlines()
+    assert lines[0].startswith("#1 MUST FOLLOW")
+    assert lines[1] == "REPLY IN: Russian."
+    assert lines[2] == "Today is Thursday 2026-08-13."
+
+
+def test_answer_prompt_lesson_type_in_rule_four() -> None:
+    # add_lesson now accepts an optional lesson_type; the prompt must mention
+    # the trial-lesson -> proefles and exam synonyms.
+    assert "lesson_type" in ANSWER_SYSTEM_PROMPT
+    assert "proefles" in ANSWER_SYSTEM_PROMPT
+    assert "trial lesson" in ANSWER_SYSTEM_PROMPT.lower()
+    assert "exam" in ANSWER_SYSTEM_PROMPT.lower()

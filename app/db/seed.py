@@ -17,6 +17,8 @@ SKILLS: list[dict[str, object]] = [
         "name": "dashboard & controls knowledge",
         "name_nl": "voertuigkennis",
     },
+    {"category": "Vehicle control", "name": "braking control", "name_nl": "remmen"},
+    {"category": "Vehicle control", "name": "acceleration", "name_nl": "versnellen"},
     # 2. Observation (kijkgedrag)
     {"category": "Observation", "name": "mirror routine", "name_nl": "spiegels"},
     {"category": "Observation", "name": "blind spot checks", "name_nl": "dode hoek"},

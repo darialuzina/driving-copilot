@@ -185,6 +185,51 @@ async def test_add_lesson_accepts_today_date(ctx: ToolContext) -> None:
     assert result["date"] == today_iso
 
 
+# --- DRIVE-7: add_lesson lesson_type (rijles|proefles|exam, default rijles) ---
+
+
+async def test_add_lesson_defaults_to_rijles(ctx: ToolContext) -> None:
+    lesson_date = _future_iso(ctx, 14)
+    result = await AddLessonTool().run(
+        {"date": lesson_date, "start_time": "15:00"}, ctx, idempotency_key="add:default"
+    )
+    assert result["lesson_type"] == "rijles"
+
+
+async def test_add_lesson_records_proefles(ctx: ToolContext) -> None:
+    lesson_date = _future_iso(ctx, 15)
+    result = await AddLessonTool().run(
+        {"date": lesson_date, "start_time": "15:00", "lesson_type": "proefles"},
+        ctx,
+        idempotency_key="add:proefles",
+    )
+    assert result["created"] is True
+    assert result["lesson_type"] == "proefles"
+
+
+async def test_add_lesson_records_exam(ctx: ToolContext) -> None:
+    lesson_date = _future_iso(ctx, 16)
+    result = await AddLessonTool().run(
+        {"date": lesson_date, "start_time": "09:00", "lesson_type": "exam"},
+        ctx,
+        idempotency_key="add:exam",
+    )
+    assert result["created"] is True
+    assert result["lesson_type"] == "exam"
+
+
+async def test_add_lesson_rejects_invalid_lesson_type(ctx: ToolContext) -> None:
+    from app.domain.errors import ToolValidationError
+
+    lesson_date = _future_iso(ctx, 17)
+    with pytest.raises(ToolValidationError):
+        await AddLessonTool().run(
+            {"date": lesson_date, "start_time": "15:00", "lesson_type": "warmup"},
+            ctx,
+            idempotency_key=None,
+        )
+
+
 # --- cancel_lesson ---
 
 

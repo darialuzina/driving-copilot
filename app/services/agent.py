@@ -19,6 +19,7 @@ from app.services.llm_types import (
 )
 from app.services.prompts import (
     answer_system_prompt,
+    detect_language,
     refusal_system_prompt,
 )
 from app.services.router import LlmClient
@@ -65,16 +66,29 @@ class AgentService:
         self._settings = settings
 
     async def handle(self, message: str, label: str, tools: list[Tool], ctx: ToolContext) -> str:
+        # Detect the user's language in code and inject an explicit per-message
+        # REPLY IN directive at the top of the answer prompt. Stops answers
+        # drifting into the wrong language when tool results are in the other
+        # language (ai.md: the model chooses and phrases; code computes).
+        reply_in = detect_language(message)
         if label in ("smalltalk", "other"):
-            return await self._freeform(message, ctx.today(), refusal=(label == "other"))
+            return await self._freeform(
+                message, ctx.today(), reply_in=reply_in, refusal=(label == "other")
+            )
         # log + lookup + analytics + docs -> typed tool-calling agent loop.
         # The router's coarse job is path safety: docs get no write tools and no DB
         # read tools (only the docs stack). See tools_for_label.
         subset = tools_for_label(label, tools)
-        return await self._agent_loop(message, subset, ctx, label)
+        return await self._agent_loop(message, subset, ctx, label, reply_in=reply_in)
 
-    async def _freeform(self, message: str, today: date, *, refusal: bool) -> str:
-        system = refusal_system_prompt(today) if refusal else answer_system_prompt(today)
+    async def _freeform(
+        self, message: str, today: date, *, reply_in: str = "", refusal: bool = False
+    ) -> str:
+        system = (
+            refusal_system_prompt(today, reply_in=reply_in)
+            if refusal
+            else answer_system_prompt(today, reply_in=reply_in)
+        )
         started = time.monotonic()
         try:
             result = await self._client.chat(
@@ -93,10 +107,16 @@ class AgentService:
         return result.content
 
     async def _agent_loop(
-        self, message: str, tools: list[Tool], ctx: ToolContext, label: str
+        self,
+        message: str,
+        tools: list[Tool],
+        ctx: ToolContext,
+        label: str,
+        *,
+        reply_in: str = "",
     ) -> str:
         tool_schemas = [t.openai_schema() for t in tools]
-        system_prompt = answer_system_prompt(ctx.today())
+        system_prompt = answer_system_prompt(ctx.today(), reply_in=reply_in)
         messages: list[dict[str, object]] = [{"role": "user", "content": message}]
         tool_results_json: list[str] = []
         total_tokens = 0
@@ -137,21 +157,21 @@ class AgentService:
 
             if not tool_calls:
                 answer = _content(msg)
-                failures = _guardrail_failures(answer, tool_results_json, label)
+                failures = _guardrail_failures(answer, tool_results_json, label, reply_in)
                 if failures:
                     # One corrective retry, then send visibly degraded.
                     messages.append(_assistant_to_history(msg))
                     messages.append(
                         {
                             "role": "system",
-                            "content": _corrective_note(failures),
+                            "content": _corrective_note(failures, reply_in),
                         }
                     )
                     retry_usage = await self._retry(messages, tool_schemas, system_prompt)
                     total_tokens += retry_usage[0]
                     total_latency_ms += retry_usage[1]
                     answer = retry_usage[2]
-                    if _guardrail_failures(answer, tool_results_json, label):
+                    if _guardrail_failures(answer, tool_results_json, label, reply_in):
                         answer = f"\u26a0\ufe0f {answer}"
                 log.info(
                     "agent.answer",
@@ -312,23 +332,67 @@ def provenance_ok(answer: str) -> bool:
     return count == 1
 
 
+# Same Cyrillic-ratio threshold as detect_language (prompts.py). Kept locally so
+# the guardrail is self-contained and unit-testable without importing prompts.
+_LANGUAGE_RATIO_THRESHOLD = 0.3
+_CYRILLIC_CODES = frozenset(
+    [*range(0x0410, 0x0450), 0x0401, 0x0451]  # А..я + Ё/ё
+)
+
+
+def _is_cyrillic(ch: str) -> bool:
+    return ord(ch) in _CYRILLIC_CODES
+
+
+def _cyrillic_ratio(text: str) -> float | None:
+    """Cyrillic fraction over alpha characters, or None when there are no letters."""
+    letters = [ch for ch in text if ch.isalpha()]
+    if not letters:
+        return None
+    cyrillic = sum(1 for ch in letters if _is_cyrillic(ch))
+    return cyrillic / len(letters)
+
+
+def answer_language_ok(answer: str, reply_language: str) -> bool:
+    """The answer's Cyrillic ratio must match the REPLY IN directive.
+
+    English directive: an answer that drifted into Russian (significant Cyrillic)
+    fails. Russian directive: an answer with almost no Cyrillic (drifted to
+    English) fails. Embedded Dutch driving terms and English provenance markers
+    do not move a genuine Russian answer below the threshold. An answer with no
+    letters at all (empty / digits-only) passes — nothing to check.
+    """
+    if not reply_language:
+        return True
+    ratio = _cyrillic_ratio(answer)
+    if ratio is None:
+        return True
+    if reply_language == "Russian":
+        return ratio >= _LANGUAGE_RATIO_THRESHOLD
+    # English
+    return ratio < _LANGUAGE_RATIO_THRESHOLD
+
+
 def _guardrail_failures(
-    answer: str, tool_results_json: list[str], label: str
+    answer: str, tool_results_json: list[str], label: str, reply_in: str = ""
 ) -> list[str]:
     """Which guardrail rules the answer violates. Empty means ok.
 
     Containment (dates/counts/ids) only applies when tool results exist; the
-    provenance marker check applies only to docs-path answers.
+    provenance marker check applies only to docs-path answers; the language
+    check applies whenever a REPLY IN directive was injected.
     """
     failures: list[str] = []
     if tool_results_json and not containment_ok(answer, tool_results_json):
         failures.append("containment")
     if label == "docs" and not provenance_ok(answer):
         failures.append("provenance")
+    if reply_in and not answer_language_ok(answer, reply_in):
+        failures.append("language")
     return failures
 
 
-def _corrective_note(failures: list[str]) -> str:
+def _corrective_note(failures: list[str], reply_in: str = "") -> str:
     parts: list[str] = []
     if "containment" in failures:
         parts.append(
@@ -341,6 +405,11 @@ def _corrective_note(failures: list[str]) -> str:
             "'from cbr.nl just now:' (from the live web fallback), or "
             "'not from the CBR docs — general knowledge, verify in your theory book:' "
             "(your own general knowledge)"
+        )
+    if "language" in failures:
+        parts.append(
+            f"reply in {reply_in} only — match the REPLY IN directive at the top; "
+            f"do not drift into the language of the tool results"
         )
     return "Corrective note: " + "; ".join(parts) + ". Reply again."
 

@@ -34,6 +34,14 @@ class Assessment(StrEnum):
     NOT_PRACTICED = "not_practiced"
 
 
+class LessonType(StrEnum):
+    """The kind of lesson a session records (spec: rijles|proefles|exam)."""
+
+    RIJLES = "rijles"  # a normal lesson (default)
+    PROEFLES = "proefles"  # a trial / mock lesson
+    EXAM = "exam"  # the real CBR practical exam
+
+
 class SkillCategory(StrEnum):
     """The seven CBR competency categories (spec section 4 / seed.py)."""
 
@@ -365,6 +373,15 @@ class AddLessonParams(ToolParams):
     start_time: str = Field(description="Lesson start time, HH:MM (24h).")
     end_time: str | None = Field(default=None, description="Optional end time, HH:MM (24h).")
     instructor: str | None = Field(default=None, description="Optional instructor name.")
+    lesson_type: LessonType = Field(
+        default=LessonType.RIJLES,
+        description=(
+            "Kind of lesson: rijles (a normal lesson, the default), "
+            "proefles (a trial/mock lesson — when Daria says 'trial lesson', "
+            "'mock lesson', 'proefles'), or exam (the real CBR practical exam — "
+            "when Daria says 'exam', 'examen')."
+        ),
+    )
 
     @field_validator("date")
     @classmethod
@@ -403,8 +420,10 @@ class AddLessonTool:
     description = (
         "Record a driving lesson Daria has booked (e.g. in your driving school's booking "
         "app) so it is tracked here. Auto-approved write. Pass the date (ISO YYYY-MM-DD, "
-        "today or future only), start_time (HH:MM), optional end_time (HH:MM) and "
-        "instructor. Idempotent: re-adding the same lesson returns the existing scheduled "
+        "today or future only), start_time (HH:MM), optional end_time (HH:MM), optional "
+        "instructor, and optional lesson_type (rijles — a normal lesson, the default; "
+        "proefles — a trial/mock lesson; exam — the real CBR practical exam). "
+        "Idempotent: re-adding the same lesson returns the existing scheduled "
         "session without creating a duplicate. This only records a booking Daria already "
         "made — it cannot book via the booking app."
     )
@@ -466,7 +485,7 @@ class AddLessonTool:
             start_time=params.start_time,
             end_time=params.end_time,
             instructor=params.instructor,
-            lesson_type="rijles",
+            lesson_type=params.lesson_type.value,
             status="scheduled",
             source="manual",
         )

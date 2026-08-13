@@ -564,3 +564,103 @@ async def test_docs_general_knowledge_marker_passes_provenance_guardrail(
     reply = await agent.handle("what is the motorway limit?", "docs", phase2_tools(), ctx)
     assert not reply.startswith("\u26a0\ufe0f")
     assert "not from the CBR docs" in reply
+
+
+# --- DRIVE-7: language enforcement (REPLY IN directive + guardrail) ---
+
+
+async def test_english_question_answered_in_english_over_russian_drift(
+    session: AsyncSession, settings: Settings
+) -> None:
+    # English question; the model's first answer drifts into Russian (the bug).
+    # The guardrail retries once; the retry answers in English and passes.
+    await load_backfill(session, BACKFILL)
+    ctx = _ctx(session)
+    client = FakeLlmClient(
+        completions=[
+            make_completion(calls=[_tool_call("c1", "get_gap_analysis", {})]),
+            # First answer drifted into Russian despite the English directive.
+            make_completion(
+                content=(
+                    "Ваши слабые места — rotondes и speed adaptation "
+                    "(оба needs_attention на 2026-08-06)."
+                )
+            ),
+            # Corrective retry: now answers in English.
+            make_completion(
+                content=(
+                    "Your weak areas are roundabouts and speed adaptation "
+                    "(both needs_attention on 2026-08-06)."
+                )
+            ),
+        ]
+    )
+    agent = AgentService(client, settings)
+    reply = await agent.handle("what are my weak areas?", "analytics", phase2_tools(), ctx)
+    assert not reply.startswith("\u26a0\ufe0f")
+    assert "roundabouts" in reply.lower()
+    # The reply is English (no significant Cyrillic drift).
+    from app.services.agent import answer_language_ok
+
+    assert answer_language_ok(reply, "English") is True
+
+
+async def test_english_question_persistent_russian_drift_degrades(
+    session: AsyncSession, settings: Settings
+) -> None:
+    await load_backfill(session, BACKFILL)
+    ctx = _ctx(session)
+    client = FakeLlmClient(
+        completions=[
+            make_completion(calls=[_tool_call("c1", "get_gap_analysis", {})]),
+            # Both answers drift into Russian -> visibly degraded with ⚠️.
+            make_completion(content="Ваши слабые места — rotondes и speed adaptation."),
+            make_completion(content="Ваши слабые места — rotondes и speed adaptation."),
+        ]
+    )
+    agent = AgentService(client, settings)
+    reply = await agent.handle("what are my weak areas?", "analytics", phase2_tools(), ctx)
+    assert reply.startswith("\u26a0\ufe0f")
+
+
+async def test_russian_question_answered_in_russian(
+    session: AsyncSession, settings: Settings
+) -> None:
+    await load_backfill(session, BACKFILL)
+    ctx = _ctx(session)
+    client = FakeLlmClient(
+        completions=[
+            make_completion(calls=[_tool_call("c1", "get_gap_analysis", {})]),
+            make_completion(
+                content=(
+                    "Ваши слабые места — rotondes и speed adaptation "
+                    "(оба needs_attention на 2026-08-06)."
+                )
+            ),
+        ]
+    )
+    agent = AgentService(client, settings)
+    reply = await agent.handle("какие у меня слабые места?", "analytics", phase2_tools(), ctx)
+    assert not reply.startswith("\u26a0\ufe0f")
+    from app.services.agent import answer_language_ok
+
+    assert answer_language_ok(reply, "Russian") is True
+
+
+async def test_reply_in_directive_injected_into_answer_prompt(
+    session: AsyncSession, settings: Settings
+) -> None:
+    # The freeform path records the system prompt in chat_calls; assert the
+    # code-detected REPLY IN directive is present and matches the message language.
+    ctx = _ctx(session)
+    client = FakeLlmClient(chat_responses=["Привет!"])
+    agent = AgentService(client, settings)
+    await agent.handle("привет", "smalltalk", phase2_tools(), ctx)
+    system_prompt = cast(str, client.chat_calls[0]["system"])
+    assert "REPLY IN: Russian." in system_prompt
+
+    client_en = FakeLlmClient(chat_responses=["Hi!"])
+    agent_en = AgentService(client_en, settings)
+    await agent_en.handle("hi", "smalltalk", phase2_tools(), ctx)
+    system_prompt_en = cast(str, client_en.chat_calls[0]["system"])
+    assert "REPLY IN: English." in system_prompt_en

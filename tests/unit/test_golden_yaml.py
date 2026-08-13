@@ -46,3 +46,21 @@ def test_golden_end_to_end_has_assertions() -> None:
     for case in cases:
         assert "message" in case
         assert "must_contain" in case or "must_not_contain" in case
+
+
+def test_golden_reply_language_when_present_is_english_or_russian() -> None:
+    data = _load()
+    cases = cast(list[dict[str, object]], data["end_to_end"])
+    for case in cases:
+        reply_language = case.get("reply_language")
+        if reply_language is not None:
+            assert reply_language in {"English", "Russian"}, (
+                f"reply_language must be English or Russian, got {reply_language!r}"
+            )
+
+
+def test_golden_has_language_enforcement_cases_both_directions() -> None:
+    data = _load()
+    cases = cast(list[dict[str, object]], data["end_to_end"])
+    languages = {c["reply_language"] for c in cases if "reply_language" in c}
+    assert languages == {"English", "Russian"}

@@ -80,7 +80,9 @@ async def test_acceptance_log_lesson_creates_note_linked_to_parking(
                     )
                 ]
             ),
-            make_completion(content="Logged ✓ parking (good)."),
+            make_completion(
+                content="Записал: парковка (хорошо). Навык — parallel parking."
+            ),
         ]
     )
     agent = AgentService(client, settings)
@@ -215,7 +217,7 @@ async def test_agent_dedups_identical_log_lesson_retries_via_hash_key(
                     _tool_call("c2", "log_lesson", same_args),
                 ]
             ),
-            make_completion(content="Logged ✓ parking (good)."),
+            make_completion(content="Записал: парковка (хорошо). Навык — parallel parking."),
         ]
     )
     agent = AgentService(client, settings)

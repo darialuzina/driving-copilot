@@ -23,28 +23,79 @@ def today_line(today: date) -> str:
     return f"Today is {_WEEKDAYS[today.weekday()]} {today.isoformat()}."
 
 
-def _inject_today(base: str, today: date) -> str:
-    """Prepend the today line to a prompt. If the prompt opens with a '#1 MUST FOLLOW'
-    rule (the only reliable slot per ai.md), insert the today line *after* that first
-    line so the must-follow rule stays in position #1.
+def _inject_after_rule_one(base: str, lines: list[str]) -> str:
+    """Inject the given lines right after the '#1 MUST FOLLOW' rule (the only reliable
+    slot per ai.md), so that rule stays in position #1. If the prompt has no #1 rule,
+    the lines are prepended.
     """
-    line = today_line(today)
     first_nl = base.find("\n")
     if first_nl != -1 and base[:first_nl].lstrip().startswith("#1"):
-        return base[: first_nl + 1] + line + "\n" + base[first_nl + 1 :]
-    return line + "\n" + base
+        return base[: first_nl + 1] + "".join(ln + "\n" for ln in lines) + base[first_nl + 1 :]
+    return "".join(ln + "\n" for ln in lines) + base
+
+
+def _inject_today(base: str, today: date) -> str:
+    return _inject_after_rule_one(base, [today_line(today)])
 
 
 def router_system_prompt(today: date) -> str:
     return _inject_today(ROUTER_SYSTEM_PROMPT, today)
 
 
-def answer_system_prompt(today: date) -> str:
-    return _inject_today(ANSWER_SYSTEM_PROMPT, today)
+def answer_system_prompt(today: date, *, reply_in: str = "") -> str:
+    """Build the answer system prompt. The per-message `reply_in` directive
+    ('English' or 'Russian') is injected right after the #1 rule so the model
+    gets an explicit, code-detected language instruction every message — this
+    stops answers drifting into the wrong language when tool results are in the
+    other language.
+    """
+    lines: list[str] = []
+    if reply_in:
+        lines.append(f"REPLY IN: {reply_in}.")
+    lines.append(today_line(today))
+    return _inject_after_rule_one(ANSWER_SYSTEM_PROMPT, lines)
 
 
-def refusal_system_prompt(today: date) -> str:
-    return _inject_today(REFUSAL_SYSTEM_PROMPT, today)
+def refusal_system_prompt(today: date, *, reply_in: str = "") -> str:
+    lines: list[str] = []
+    if reply_in:
+        lines.append(f"REPLY IN: {reply_in}.")
+    lines.append(today_line(today))
+    return _inject_after_rule_one(REFUSAL_SYSTEM_PROMPT, lines)
+
+
+# Cyrillic Unicode range covers Russian; Ё/ё sit outside the contiguous block.
+_CYRILLIC_RANGES = (
+    range(0x0410, 0x0450),  # А..я
+    (0x0401,),  # Ё
+    (0x0451,),  # ё
+)
+
+
+def _is_cyrillic(ch: str) -> bool:
+    code = ord(ch)
+    return any(code in r for r in _CYRILLIC_RANGES)
+
+
+# A message with >= this fraction of Cyrillic letters is treated as Russian.
+# Handles mixed sentences with embedded Dutch driving terms (e.g.
+# "сегодня делали bijzondere verrichtingen") — those stay mostly Cyrillic.
+_LANGUAGE_RATIO_THRESHOLD = 0.3
+
+
+def detect_language(message: str) -> str:
+    """Detect the user message's language via a Cyrillic-ratio heuristic.
+
+    Daria writes Russian or English only (Dutch appears as embedded vocabulary,
+    never as full sentences), so a single ratio threshold over alpha characters
+    is sufficient and dependency-free. Returns 'Russian' or 'English'.
+    """
+    letters = [ch for ch in message if ch.isalpha()]
+    if not letters:
+        return "English"
+    cyrillic = sum(1 for ch in letters if _is_cyrillic(ch))
+    ratio = cyrillic / len(letters)
+    return "Russian" if ratio >= _LANGUAGE_RATIO_THRESHOLD else "English"
 
 
 ROUTER_SYSTEM_PROMPT = """\
@@ -95,7 +146,7 @@ Rules:
 1. Only facts from tool results. If a tool returned nothing, say so plainly — never invent lesson data, dates, or counts.
 2. When you mention a lesson or a note, include its date so Daria can verify it.
 3. To log what was practiced, call log_lesson with the date, the practiced skills (English names, with assessment good|ok|needs_attention|not_practiced and a short note). Then confirm what was logged and flag any unmatched skills.
-4. To record a lesson Daria has booked (e.g. in your driving school's booking app), call add_lesson with the date, start_time (HH:MM), optional end_time and instructor. To cancel a recorded lesson, call cancel_lesson with the session_id or the date. Confirm the result plainly. This only changes the record here — you cannot book or cancel in the booking app; point Daria there for that. add_lesson only accepts today or a future date; log_lesson only accepts today or a date within the last 30 days.
+4. To record a lesson Daria has booked (e.g. in your driving school's booking app), call add_lesson with the date, start_time (HH:MM), optional end_time, instructor, and optional lesson_type. lesson_type is one of: rijles (a normal lesson — the default), proefles (a trial/mock lesson — when Daria says "trial lesson", "mock lesson", "proefles"), or exam (the real CBR exam — when Daria says "exam", "examen", "practical exam"). To cancel a recorded lesson, call cancel_lesson with the session_id or the date. Confirm the result plainly, including the lesson type. This only changes the record here — you cannot book or cancel in the booking app; point Daria there for that. add_lesson only accepts today or a future date; log_lesson only accepts today or a date within the last 30 days.
 5. Max 6 sentences unless Daria asks for detail. Telegram-friendly. Formatting: use HTML tags <b>...</b> for bold and <i>...</i> for italic — nothing else. Do NOT use markdown asterisks (*), double underscores, backticks, markdown headers, or markdown tables; the message is sent as Telegram HTML, so markdown would render as literal punctuation.
 6. Provenance labels on knowledge (docs) answers:
    - from the knowledge base (get_cbr_info / cbr_search): cite the section, e.g. "Rijprocedure B, §3.7" or "Rijprocedure B, §Toepassing Hoofdstuk 1".

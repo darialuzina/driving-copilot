@@ -50,3 +50,31 @@ def test_unmatched_returns_none() -> None:
 
 def test_empty_query() -> None:
     assert fuzzy_match_skill("", SKILLS) is None
+
+
+# --- DRIVE-7: braking control (remmen) and acceleration (versnellen) ---
+
+
+DRIVE7_SKILLS = [
+    *SKILLS,
+    _skill("braking control", "remmen", "Vehicle control"),
+    _skill("acceleration", "versnellen", "Vehicle control"),
+]
+
+
+def test_remen_matches_braking_control() -> None:
+    matched = fuzzy_match_skill("remmen", DRIVE7_SKILLS)
+    assert matched is not None
+    assert matched.name == "braking control"
+
+
+def test_versnellen_matches_acceleration() -> None:
+    matched = fuzzy_match_skill("versnellen", DRIVE7_SKILLS)
+    assert matched is not None
+    assert matched.name == "acceleration"
+
+
+def test_braking_matches_braking_control() -> None:
+    matched = fuzzy_match_skill("braking", DRIVE7_SKILLS)
+    assert matched is not None
+    assert matched.name == "braking control"

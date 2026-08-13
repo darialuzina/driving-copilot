@@ -83,14 +83,29 @@ ingestion and digests arrive in later phases.
 
 Two new write tools (tier `write_auto`, audit-logged, idempotent), routed via the
 `log` label (the only write-allowing path): `add_lesson(date, start_time,
-end_time?, instructor?)` records a lesson Daria booked in the On My Way app;
-`cancel_lesson(date | session_id)` cancels a recorded lesson. Both are picked up
+end_time?, instructor?, lesson_type?)` records a lesson Daria booked in the
+booking app — `lesson_type` is `rijles` (default), `proefles` (trial/mock lesson),
+or `exam` (the real CBR practical exam); `cancel_lesson(date | session_id)`
+cancels a recorded lesson. Both are picked up
 by `get_next_lessons`. Telegram replies are sent with `parse_mode=HTML`; the
 answer prompt emits `<b>`/`<i>` (no markdown), residual markdown is stripped
 before send. The semantic-layer `pace()` returns a `verdict` of `no_exam_date`
 (with counts, `on_track=null` — never `on_track=false`) when `EXAM_DATE` is
 unset, else `on_track`/`off_track`. Answers end with the information and never
 offer follow-up actions or questions (the bot has no conversation memory).
+
+### DRIVE-7 — language enforcement + first-real-usage gaps
+
+Reply language is detected in code (Cyrillic-ratio heuristic, en/ru only) and an
+explicit `REPLY IN: English|Russian` directive is injected at the top of the
+answer/refusal prompt every message. A guardrail checks the answer's Cyrillic
+ratio against the directive: a mismatch (e.g. an English question whose answer
+drifted into Russian when the tool results were in Russian) triggers one
+corrective retry, then a visibly degraded reply prefixed with ⚠️. Two
+Vehicle-control skills Daria's instructor treats as distinct — braking control
+(`remmen`) and acceleration (`versnellen`) — were added to the seeded CBR matrix
+(Alembic migration `0003`) so free-text notes match them instead of falling
+through to general notes.
 
 Rebuild the knowledge base from the PDF (requires `DEEPL_API_KEY` for the
 English translation):
