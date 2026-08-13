@@ -184,10 +184,10 @@ class GetNextLessonsTool:
 class GetLessonHistoryTool:
     name = "get_lesson_history"
     description = (
-        "List the most recent past lessons (date < today) with their notes. "
-        "Each session includes id, date, instructor, status and its notes "
-        "(id, skill, assessment, note, created_at). Use this for 'what did we do on <date>' "
-        "and 'what did we do last time'."
+        "List the most recent past lessons (date <= today) with their notes. "
+        "A same-day completed lesson is included. Each session includes id, date, "
+        "instructor, status and its notes (id, skill, assessment, note, created_at). "
+        "Use this for 'what did we do on <date>' and 'what are my notes from today?'."
     )
     tier = RiskTier.READ
 

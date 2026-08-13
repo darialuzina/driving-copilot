@@ -83,6 +83,26 @@ def test_sanitize_keeps_allowed_tag_around_escaped_text() -> None:
     assert out == "<b>speed &lt; 50</b>"
 
 
+# --- DRIVE-9: idempotent escaping (no entity leak) ---
+
+
+def test_sanitize_is_idempotent_for_pre_escaped_ampersand() -> None:
+    # The answer model, told to emit HTML, may itself escape an ampersand as
+    # "&amp;". The sanitizer must not double-escape it to "&amp;amp;" (which with
+    # parse_mode=HTML renders as a literal "&amp;"). A raw "&" and a pre-escaped
+    # "&amp;" must produce the same single "&amp;" so both render back as "&".
+    assert sanitize_html_for_telegram("tom &amp; jerry") == "tom &amp; jerry"
+    assert sanitize_html_for_telegram("tom & jerry") == "tom &amp; jerry"
+    assert "amp;amp" not in sanitize_html_for_telegram("tom &amp; jerry")
+
+
+def test_sanitize_is_idempotent_for_pre_escaped_angle_brackets() -> None:
+    # A model-emitted "&lt;" meant as literal text must round-trip to "&lt;" (render
+    # as "<"), not become a live tag and not stay double-escaped.
+    assert sanitize_html_for_telegram("use &lt; for less-than") == "use &lt; for less-than"
+    assert sanitize_html_for_telegram("use < for less-than") == "use &lt; for less-than"
+
+
 # --- to_telegram_html (composed helper) ---
 
 

@@ -211,3 +211,17 @@ end_to_end:
     must_contain:
       - "rotondes"         # Dutch term / skill name may appear embedded
     must_not_contain: []
+  # --- DRIVE-9: today-boundary in lesson history ---
+  # history = date <= today; a same-day completed lesson is history. The runner
+  # seeds a completed session dated "today" with a parking note, then asks for
+  # today's notes. Before DRIVE-9, date < today excluded the same-day completed
+  # lesson so the answer was "no lesson recorded" while gap analysis saw the note.
+  - name: notes_from_today_over_same_day_completed
+    message: "what are my notes from today?"
+    fixture: today_completed_session
+    route: lookup
+    must_contain:
+      - "parking"
+    must_not_contain:
+      - "no lesson recorded"
+      - "no lessons yet"

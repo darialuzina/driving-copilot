@@ -27,9 +27,17 @@ class SessionRepository:
         return list(result.scalars().all())
 
     async def get_history(self, today: date, limit: int) -> list[SessionModel]:
+        # DRIVE-9: the history/upcoming boundary is defined once here. History =
+        # date <= today (a same-day completed lesson is history — "what are my notes
+        # from today?" must see it). Upcoming = scheduled AND date >= today
+        # (get_upcoming); a same-day scheduled lesson stays in upcoming until
+        # log_lesson flips it to completed, after which it drops from upcoming and
+        # shows up here. The old `date < today` excluded a same-day completed lesson,
+        # so gap analysis saw today's notes while get_lesson_history answered "no
+        # lesson recorded".
         stmt = (
             select(SessionModel)
-            .where(SessionModel.date < today)
+            .where(SessionModel.date <= today)
             .order_by(SessionModel.date.desc(), SessionModel.id.desc())
             .limit(limit)
         )

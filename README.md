@@ -125,9 +125,26 @@ Four fixes from the first week of real usage:
 - **Router.** Notes-by-date phrasings ("what are my notes from 13/08?") were
   mislabelled `other` and refused. The router prompt and `evals/golden.yaml`
   gained notes-by-date examples (English + Russian) routing to `lookup`.
-- **Copy.** A production refusal said "our driving school's booking app". The
+  - **Copy.** A production refusal said "our driving school's booking app". The
   refusal prompt now says Daria's ("your driving school's booking app") and
   explicitly forbids "our" — the copilot is not a driving school.
+
+### DRIVE-9 — today-boundary in lesson history + HTML entity leak
+
+- **Today-boundary.** `get_lesson_history` used `date < today`, so a same-day
+  completed lesson was excluded — "what are my notes from today?" answered "no
+  lesson recorded" while `get_gap_analysis` saw the same day's notes. The
+  boundary is now defined once in `SessionRepository`: history = `date <= today`
+  (a same-day completed lesson is history); upcoming = scheduled AND
+  `date >= today` (a same-day scheduled lesson stays in `get_next_lessons` until
+  `log_lesson` flips it to completed, then drops out and shows up in history).
+- **HTML entity leak.** A reply rendered a literal `&amp;`. The answer model,
+  told to emit HTML, may itself escape an ampersand as `&amp;`; the sanitizer
+  then re-escaped it to `&amp;amp;`, which with `parse_mode=HTML` renders as a
+  literal `&amp;`. `sanitize_html_for_telegram` is now idempotent (unescape then
+  re-escape the non-tag segments), so a `&` and a model-emitted `&amp;` both
+  render as `&`. All sends continue to route through `send_reply`
+  (`to_telegram_html` + `parse_mode="HTML"`).
 
 Rebuild the knowledge base from the PDF (requires `DEEPL_API_KEY` for the
 English translation):

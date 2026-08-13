@@ -158,8 +158,8 @@ Implement as OpenAI function-calling tools. Every tool validates params before t
 
 | Tool | Params | Returns | Notes |
 |---|---|---|---|
-| get_next_lessons | days_ahead int=14 | upcoming sessions | |
-| get_lesson_history | limit int=10 | past sessions + their notes (full notes, as built — richer than the original "note counts") | |
+| get_next_lessons | days_ahead int=14 | upcoming sessions | upcoming = scheduled AND date >= today (a same-day scheduled lesson stays here until completed) |
+| get_lesson_history | limit int=10 | past sessions + their notes (full notes, as built — richer than the original "note counts") | history = date <= today; a same-day completed lesson is history (DRIVE-9). Boundary defined once in SessionRepository. |
 | get_skill_progress | category str? (enum of 7) | per-skill: status, last note, last practiced | uses skill_status() |
 | get_gap_analysis | — | weak + not_started skills ranked by exam weight; pace() output | the star tool. Tie-breaker (deterministic): equal rank → higher evidence_count first, then alphabetical by skill name. |
 | get_notes | skill str? , query str? | matching notes with dates | substring match ok in v1 |

@@ -53,13 +53,22 @@ def sanitize_html_for_telegram(text: str) -> str:
     The model is instructed to emit <b>/<i> for emphasis. Anything else that looks
     like a tag, and every bare &/</>, is HTML-escaped so it renders literally and
     cannot break Telegram's HTML parser.
+
+    DRIVE-9: idempotent escaping. The answer model, told to emit HTML, may itself
+    escape an ampersand as "&amp;" (or a stray "<" as "&lt;"). Re-escaping that
+    verbatim produced "&amp;amp;", which with parse_mode=HTML renders as a literal
+    "&amp;" — the entity leak. We html.unescape each non-tag segment first, then
+    re-escape, so a "&" and a "&amp;" from the model both end up as a single
+    "&amp;" and render back as "&". Allowed tags are split out before this, so a
+    real <b> is never touched and an "&lt;b&gt;" the model meant as literal text
+    round-trips back to "&lt;b&gt;" (renders as "<b>"), never becomes a live tag.
     """
     out: list[str] = []
     for part in _ALLOWED_TAG_RE.split(text):
         if part and _ALLOWED_TAG_RE.fullmatch(part):
             out.append(part.lower())
         else:
-            out.append(html.escape(part, quote=False))
+            out.append(html.escape(html.unescape(part), quote=False))
     return "".join(out)
 
 
