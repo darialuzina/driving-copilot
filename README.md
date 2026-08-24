@@ -1,6 +1,6 @@
 # Driving Copilot
 
-A Telegram-based AI copilot for Daria's driving-exam preparation. Tracks lessons
+A Telegram-based AI copilot for driving-exam preparation. Tracks lessons
 (parsed from On My Way booking emails + quick notes after each lesson), maps progress
 against the official CBR exam requirements, and answers questions in chat.
 
