@@ -69,7 +69,7 @@ Design notes:
 Spec-driven, with coding agents working under a rules harness:
 
 - [`driving-copilot-spec.md`](driving-copilot-spec.md) — the living specification every agent session reads; deviations flow back into it as "as built" notes.
-- `.agents/` — architecture, code and testing rules, plus [`ai.md`](.agents/agents/ai.md) for LLM features (guardrails, prompt discipline, eval requirements, secrets handling). Pre-commit hooks, ruff, basedpyright and pytest enforce what the rules describe.
+- A private rules harness (architecture, code, testing and LLM-feature rules) that coding agents read before each task; pre-commit hooks, ruff, basedpyright and pytest enforce it.
 - Implementation by [OpenCode](https://opencode.ai) running GLM 5.2 against these rules and skills; code review by a second model (Kimi K2.7) — see [`reviews/DRIVE-4-code-review.md`](reviews/).
 - [`reviews/DRIVE-2-spec-audit.md`](reviews/) — an agent-written audit of the implementation against the spec, triaged by hand into fixes, spec updates and deferred items.
 - `evals/golden.yaml` — router accuracy per label and per language, tool-choice checks, answer assertions, refusal cases; grown from real traffic.
