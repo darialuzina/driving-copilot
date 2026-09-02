@@ -1,156 +1,110 @@
 # Driving Copilot
 
-A Telegram-based AI copilot for driving-exam preparation. Tracks lessons
-(parsed from On My Way booking emails + quick notes after each lesson), maps progress
-against the official CBR exam requirements, and answers questions in chat.
+A Telegram assistant for preparing for the Dutch practical driving exam (CBR, category B). It tracks driving lessons, maps progress against the official CBR skill matrix, answers exam questions with citations from the official *Rijprocedure B*, and runs unattended on a small cloud VM.
 
-Architecture: small-model router → typed tools → deterministic code → guardrails → evals.
-The model chooses and phrases; code computes. Every fact in an answer comes from a tool result.
+The project is also a reference implementation of an agentic assistant built on open-weight models: intent routing, typed tools, a semantic layer, provenance-labeled answers, code-enforced guardrails, an eval set, and access control applied below the model.
 
-See `driving-copilot-spec.md` for the full specification.
+---
+
+## What it does
+
+```
+User: I had a lesson today with Abid — clutch better, roundabouts better,
+      once went 60 where the limit was 50
+Bot:  Logged for 2026-08-13 (trial lesson with Abid).
+      gear use & clutch control — good · roundabouts — good ·
+      speed adaptation — needs attention
+
+User: How are my roundabouts?
+Bot:  30 Jul — needs attention ("still difficult"), 6 Aug — needs attention,
+      13 Aug — good. Status: in_progress — one more good lesson makes it solid.
+
+User: Can I fail for stalling?
+Bot:  A single stall does not normally fail you; frequent stalling can,
+      especially during special manoeuvres.
+      (Rijprocedure B, §Toepassing Hoofdstuk 1; §3.7)
+
+User: How much does the practical exam cost?
+Bot:  from cbr.nl just now: €143,50 in 2026.
+```
+
+Capabilities: lesson history and upcoming lessons · logging free-form notes (English or Russian), fuzzy-matched to a 29-skill CBR matrix · gap analysis and pace against an exam date · exam knowledge Q&A over a verbatim knowledge base, with a scoped live-web fallback · recording and cancelling booked lessons. Replies follow the language of the question.
+
+## Architecture
+
+```
+Telegram (single allowed chat — identity checked in code before any model call)
+      │
+      ▼
+  Router — small model (qwen3-coder), one call, one label
+      │     lookup / analytics / log / docs / smalltalk / other
+      │     invalid label → retry with the larger model → safe fallback
+      ▼
+  Agent loop — larger model (GLM 5.2) + typed tools
+      │     Pydantic-validated params, enums, date/tenant checks before the DB
+      ▼
+  Tools → services → semantic layer → PostgreSQL
+      │     skill_status() / pace() / stale(): each definition exists once, in code
+      ▼
+  Guardrails (code, after generation)
+        · containment: ids, dates and numbers in the answer must exist in the
+          tool results — otherwise one corrective retry, then a marked send
+        · provenance: knowledge answers must carry exactly one source marker
+        · language: reply script must match the question's
+        · refusal for out-of-scope requests is a tested path
+```
+
+The rule applied throughout: the model chooses and phrases; code computes; irreversible actions are gated. The LLM does not write SQL, does not apply business definitions, and never sees credentials.
+
+Design notes:
+
+- **Typed tools with risk tiers.** Reads are unrestricted; writes are idempotent (argument-hash keys) and audit-logged; consequential actions are reserved for a preview→confirm tier.
+- **Semantic layer** (`app/services/semantic.py`). "Weak", "solid" and "on track" are functions, not prompt text. A definition changes in one place.
+- **Provenance labels, enforced in code.** Every knowledge answer states its source: a Rijprocedure section, "from cbr.nl just now" (Tavily, cbr.nl-scoped — a flow that holds no write tools, since web text is untrusted input), or "general knowledge — verify in your theory book".
+- **Verbatim knowledge base.** The official Rijprocedure B PDF is converted to structure-preserving Dutch markdown (297 sections, from the document's own table of contents) and translated section by section with the DeepL API — no LLM in the translation path. Tests enforce fidelity: every heading must exist in the PDF extraction, nl/en length ratios stay within a band, section counts match.
+- **Telemetry.** Every LLM call logs model, latency and token usage; router decisions are appended to `logs/router.jsonl` as eval data. Telemetry writes cannot fail a user request.
+
+## How it was built
+
+Spec-driven, with coding agents working under a rules harness:
+
+- [`driving-copilot-spec.md`](driving-copilot-spec.md) — the living specification every agent session reads; deviations flow back into it as "as built" notes.
+- `.agents/` — architecture, code and testing rules, plus [`ai.md`](.agents/agents/ai.md) for LLM features (guardrails, prompt discipline, eval requirements, secrets handling). Pre-commit hooks, ruff, basedpyright and pytest enforce what the rules describe.
+- Implementation by [OpenCode](https://opencode.ai) running GLM 5.2 against these rules and skills; code review by a second model (Kimi K2.7) — see [`reviews/DRIVE-4-code-review.md`](reviews/).
+- [`reviews/DRIVE-2-spec-audit.md`](reviews/) — an agent-written audit of the implementation against the spec, triaged by hand into fixes, spec updates and deferred items.
+- `evals/golden.yaml` — router accuracy per label and per language, tool-choice checks, answer assertions, refusal cases; grown from real traffic.
+
+Work is split into reviewable tasks (`DRIVE-1` … `DRIVE-9` in the git log), one branch each: build → review → merge → deploy.
+
+Production issues found in the first days of use, and their fixes:
+
+| Issue | Cause | Fix |
+|---|---|---|
+| Test suite deleted real data | dev and test shared one database | separate databases, a guard fixture that aborts test runs not pointed at `*_test`, transactional fixtures |
+| Bot stopped answering | a telemetry write failed and crashed the handler | telemetry wrapped; rule added: observability failures never break a request |
+| Replies in the wrong language | model followed the language of retrieved notes | language detected in code, injected per message, checked on output |
+| Finished lesson counted as upcoming | no scheduled→completed transition | logging notes completes the session; data repaired by migration |
+| Same-day lesson missing from history | `date < today` boundary | boundary defined once, tests added |
 
 ## Stack
 
-- Python 3.14, async SQLAlchemy 2.0, PostgreSQL (docker-compose), Alembic
-- `python-telegram-bot` v22 (async), `openai` client against OpenRouter, `httpx` for Tavily
-- Two models via env: `ROUTER_MODEL` (classification) and `ANSWER_MODEL` (tool-calling + answers)
-- `TAVILY_API_KEY` for the cbr.nl-scoped live web fallback (`web_search_cbr`)
-- `DEEPL_API_KEY` (free tier) for translating the Rijprocedure B KB (build-time only)
+Python 3.14 · python-telegram-bot v22 · PostgreSQL, SQLAlchemy, Alembic · structlog · uv. Models via OpenRouter (qwen3-coder for routing, GLM 5.2 for answers), configured by environment variables. DeepL for translation, Tavily for the web fallback.
 
-## Setup
+Deployment: Google Cloud e2-micro (free tier), Docker Compose with bot, Postgres and a nightly `pg_dump` sidecar; migrations run on boot; no inbound ports (long polling). Update is `git pull && docker compose up -d --build`. Operator instructions: [`RUNBOOK.md`](RUNBOOK.md).
+
+## Limitations and roadmap
+
+No conversation memory yet — each message stands alone, and the bot is instructed not to imply otherwise. Pre-lesson and weekly digests and a live eval runner are specified (spec §8, §9) but not built. The skill matrix is configuration and grows from real lessons.
+
+## Running it
+
+Requires a Telegram bot token, an OpenRouter key and optionally DeepL and Tavily keys — see `.env.example`.
 
 ```bash
 uv sync
 docker compose up -d db
-cp .env.example .env   # then fill in TELEGRAM_BOT_TOKEN, ALLOWED_CHAT_ID, LLM_API_KEY, TAVILY_API_KEY
-alembic upgrade head   # creates tables + seeds the CBR skills matrix
-uv run python -m app.main backfill   # load Daria's lesson history (idempotent)
-uv run python -m app.main            # run the Telegram bot
-```
-
-To find your `ALLOWED_CHAT_ID`: start the bot, send it `/start`, and read the chat id
-from the `bot.ignored_no_allowed_chat_id` log line, then set it in `.env` and restart.
-
-## Checks
-
-```bash
-uv run ruff check .
-uv run basedpyright
-uv run pytest -q
-```
-
-Phase 2 live smoke (the three provenance label paths against the real LLM + Tavily):
-
-```bash
-PYTHONPATH=. uv run python scripts/phase2_live_smoke.py
-```
-
-## Deploy
-
-Production runs on a single Google Cloud `e2-micro` (always-free tier) under
-docker compose with three services: `db`, `bot`, `backup`. The bot uses long
-polling — outbound only, no inbound ports/TLS. Full instructions (provision,
-install docker, clone, ship `.env`, `make deploy-check`, `docker compose up
--d`, verify `/start`, update, backup/restore, logs) are in
-[`RUNBOOK.md`](RUNBOOK.md).
-
-```bash
-make deploy-check   # validate .env keys (names only) + compose config
-docker compose up -d --build
-```
-
-## Phase 2 (current)
-
-Everything in Phase 1 plus the "brain": the semantic layer (`skill_status`, `pace`,
-`stale` — one code definition each per spec §3), the remaining read tools
-(`get_skill_progress`, `get_gap_analysis`, `get_notes`, `get_pace`), and the docs
-stack. The CBR Rijprocedure B knowledge base is a **verbatim** conversion of the
-official CBR PDF (`knowledge/sources/rijprocedure-b.pdf`) into
-`knowledge/rijprocedure-b.nl.md` (297 sections, real numbering from the document's
-own table of contents) plus a faithful DeepL translation in
-`knowledge/rijprocedure-b.en.md`. Agentic navigation is exposed via `get_toc`
-(section tree: ids + en/nl titles + real numbers) and `get_section(section_id)`
-(verbatim en + nl text); `get_cbr_info` returns verbatim topic excerpts with the
-cbr.nl source URL and fetch date; `cbr_search` is keyword search over `knowledge/`;
-`web_search_cbr` (Tavily, cbr.nl-scoped) is fallback only, with no write tools in
-that flow. Provenance rule #5 is active (KB section citation / "from cbr.nl just
-now" / "not from the CBR docs — general knowledge"). Citations use the document's
-real section numbers (e.g. "Rijprocedure B, §3.7"). Analytics and docs route
-through the agent loop (the Phase 1 `PHASE2_PENDING` shortcut is gone). Email
-ingestion and digests arrive in later phases.
-
-### DRIVE-5 — manual lesson management + usability
-
-Two new write tools (tier `write_auto`, audit-logged, idempotent), routed via the
-`log` label (the only write-allowing path): `add_lesson(date, start_time,
-end_time?, instructor?, lesson_type?)` records a lesson Daria booked in the
-booking app — `lesson_type` is `rijles` (default), `proefles` (trial/mock lesson),
-or `exam` (the real CBR practical exam); `cancel_lesson(date | session_id)`
-cancels a recorded lesson. Both are picked up
-by `get_next_lessons`. Telegram replies are sent with `parse_mode=HTML`; the
-answer prompt emits `<b>`/`<i>` (no markdown), residual markdown is stripped
-before send. The semantic-layer `pace()` returns a `verdict` of `no_exam_date`
-(with counts, `on_track=null` — never `on_track=false`) when `EXAM_DATE` is
-unset, else `on_track`/`off_track`. Answers end with the information and never
-offer follow-up actions or questions (the bot has no conversation memory).
-
-### DRIVE-7 — language enforcement + first-real-usage gaps
-
-Reply language is detected in code (Cyrillic-ratio heuristic, en/ru only) and an
-explicit `REPLY IN: English|Russian` directive is injected at the top of the
-answer/refusal prompt every message. A guardrail checks the answer's Cyrillic
-ratio against the directive: a mismatch (e.g. an English question whose answer
-drifted into Russian when the tool results were in Russian) triggers one
-corrective retry, then a visibly degraded reply prefixed with ⚠️. Two
-Vehicle-control skills Daria's instructor treats as distinct — braking control
-(`remmen`) and acceleration (`versnellen`) — were added to the seeded CBR matrix
-(Alembic migration `0003`) so free-text notes match them instead of falling
-through to general notes.
-
-### DRIVE-8 — production week-one findings
-
-Four fixes from the first week of real usage:
-
-- **Resilience.** Transient LLM/API errors (`LlmCallError`,
-  `RouterUnavailableError`) now get one automatic retry with a short backoff
-  before the user-facing "Sorry, I couldn't process that right now" fallback.
-  Each retry is logged with the underlying error class (`bot.transient_retry`).
-  Two week-one failures that both succeeded on an immediate rephrase are now
-  recovered automatically. Writes are safe to re-run: write tools carry
-  idempotency keys and dedupe against the failed attempt's audit rows.
-- **Session lifecycle.** `log_lesson` attaching notes to a session dated today
-  or earlier that is still `status=scheduled` now marks it `completed`, so
-  `pace()` stops counting a finished lesson as "1 lesson remaining". The one
-  affected production row (session 7) is flipped via Alembic migration `0004`.
-- **Router.** Notes-by-date phrasings ("what are my notes from 13/08?") were
-  mislabelled `other` and refused. The router prompt and `evals/golden.yaml`
-  gained notes-by-date examples (English + Russian) routing to `lookup`.
-  - **Copy.** A production refusal said "our driving school's booking app". The
-  refusal prompt now says Daria's ("your driving school's booking app") and
-  explicitly forbids "our" — the copilot is not a driving school.
-
-### DRIVE-9 — today-boundary in lesson history + HTML entity leak
-
-- **Today-boundary.** `get_lesson_history` used `date < today`, so a same-day
-  completed lesson was excluded — "what are my notes from today?" answered "no
-  lesson recorded" while `get_gap_analysis` saw the same day's notes. The
-  boundary is now defined once in `SessionRepository`: history = `date <= today`
-  (a same-day completed lesson is history); upcoming = scheduled AND
-  `date >= today` (a same-day scheduled lesson stays in `get_next_lessons` until
-  `log_lesson` flips it to completed, then drops out and shows up in history).
-- **HTML entity leak.** A reply rendered a literal `&amp;`. The answer model,
-  told to emit HTML, may itself escape an ampersand as `&amp;`; the sanitizer
-  then re-escaped it to `&amp;amp;`, which with `parse_mode=HTML` renders as a
-  literal `&amp;`. `sanitize_html_for_telegram` is now idempotent (unescape then
-  re-escape the non-tag segments), so a `&` and a model-emitted `&amp;` both
-  render as `&`. All sends continue to route through `send_reply`
-  (`to_telegram_html` + `parse_mode="HTML"`).
-
-Rebuild the knowledge base from the PDF (requires `DEEPL_API_KEY` for the
-English translation):
-
-```bash
-uv run python scripts/build_rijprocedure_nl.py   # PDF -> rijprocedure-b.nl.md
-uv run python scripts/build_rijprocedure_en.py   # DeepL -> rijprocedure-b.en.md
-uv run python scripts/build_cbr_topics.py        # verbatim topic excerpts
+uv run alembic upgrade head
+uv run python -m app.main backfill   # seed lesson history (idempotent)
+uv run python -m app.main            # start the bot
+uv run pytest
 ```
