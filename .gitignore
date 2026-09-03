@@ -9,3 +9,9 @@ htmlcov/
 *.db
 workshop.md
 logs/
+.agents/
+AGENTS.md
+CLAUDE.md
+opencode.json
+.opencode/
+Claude outputs/
