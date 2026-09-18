@@ -396,3 +396,16 @@ docker compose down -v          # stop + remove containers AND pgdata/backups
 | Backups not appearing | `docker compose logs backup` — the loop logs sleep + dump events; check the `backups` volume with `docker compose exec backup ls /backups` |
 | VM out of memory | `docker stats`; the e2-micro has 1 GB — Postgres default config is modest; if the bot OOMs, check `docker compose logs bot` for MemoryError |
 | Ephemeral IP changed after restart | expected; the bot's long-poll connection reconnects automatically. If a static hostname is needed, use a dynamic DNS updater — not required for the bot itself |
+| Bot silent, `gcloud compute instances list` says "billing must be enabled" | The GCP free trial expired (2026-09-04) and Google disabled billing, which stops every VM. Fix: Billing → Upgrade to a full account (the e2-micro stays under the always-free discount), then `gcloud compute instances start driving-copilot --zone us-central1-a`. Containers come back on their own (`restart: unless-stopped`). Keep a €5/month budget alert on the billing account. |
+
+## 12. Copy backups off the VM
+
+The nightly dumps live in a Docker volume on the VM itself, so they disappear with the VM. Pull them to the laptop after any incident and at least monthly:
+
+```bash
+# Fresh dump now, then copy the whole backups volume out of the container:
+gcloud compute ssh driving-copilot --zone us-central1-a --project driving-copilot-daria --command "cd driving-copilot && docker compose exec -T backup sh -c 'pg_dump --host=db --username=app --no-owner --no-privileges --dbname=driving_copilot | gzip > /backups/manual-$(date +%Y%m%d).sql.gz' && docker compose cp backup:/backups ./backups-copy"
+
+# Download to the laptop:
+gcloud compute scp --recurse driving-copilot:driving-copilot/backups-copy ~/Downloads/driving-copilot-backups --zone us-central1-a --project driving-copilot-daria
+```
